@@ -1,9 +1,10 @@
+import json
 import os
 import shutil
 import tempfile
 import pytest
 import torch
-from torch_geometric.data import DataLoader
+from torch_geometric.data import DataLoader, Data
 from rdkit import Chem
 
 from src.features.featurizer import Tokenizer
@@ -50,7 +51,7 @@ def mock_smiles_data():
     return [
         ("CCO", { (0, 1): 88.0, (1, 2): 85.0 }), # C-C BDE, C-O BDE
         ("CCC", { (0, 1): 90.0 }), # C-C BDE only for first bond
-        ("C", {}) # Single atom, no bonds
+        ("C", {}) # Single atom, becomes CH4 after AddHs, has bonds
     ]
 
 @pytest.fixture
@@ -63,7 +64,7 @@ def temp_dataset_dir():
 def test_bde_dataset_init_and_len(mock_smiles_data, mock_tokenizer, temp_dataset_dir):
     """Tests if the dataset initializes and reports correct length."""
     dataset = BDEDataset(root=temp_dataset_dir, smiles_data=mock_smiles_data, tokenizer=mock_tokenizer)
-    assert len(dataset) == 2 # "C" molecule should be skipped as it has no bonds
+    assert len(dataset) == 3 # "C" molecule is processed into CH4 and is included
 
 def test_bde_dataset_data_object_structure(mock_smiles_data, mock_tokenizer, temp_dataset_dir):
     """Tests the structure and types of the PyG Data objects."""

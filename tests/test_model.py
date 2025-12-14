@@ -1,41 +1,98 @@
-import numpy as np
-from alfabet import model
+import pytest
+import torch
+from torch_geometric.data import DataLoader, Data
+import shutil
+import tempfile
+import os
+import json
 
+# Import fixtures from previous test file
+from tests.test_dataset import mock_smiles_data, mock_tokenizer, temp_dataset_dir
 
-def test_predict():
-    results = model.predict(["CC", "NCCO", "CF", "B"])
+from src.data.dataset import BDEDataset
+from src.models.mpnn import BDEInteractionLayer, BDEModel
 
-    assert not results[results.molecule == "B"].is_valid.any()
-    assert results[results.molecule != "B"].is_valid.all()
+ATOM_FEATURES = 128 # Matching the original Keras implementation
 
-    # Should be less than 1 kcal/mol on this easy set
-    assert (results.bde_pred - results.bde).abs().mean() < 1.0
+@pytest.fixture
+def sample_data_batch(mock_smiles_data, mock_tokenizer, temp_dataset_dir):
+    """Provides a batch of data from the BDEDataset."""
+    dataset = BDEDataset(root=temp_dataset_dir, smiles_data=mock_smiles_data, tokenizer=mock_tokenizer)
+    dataloader = DataLoader(dataset, batch_size=2)
+    return next(iter(dataloader))
 
-    np.testing.assert_allclose(
-        results[results.molecule == "CC"].bde_pred, [90.7, 99.8], atol=1.0, rtol=0.05
+def test_bde_interaction_layer_shape(sample_data_batch):
+    """
+    Tests the shape consistency of the BDEInteractionLayer's forward pass.
+    """
+    batch = sample_data_batch
+    layer = BDEInteractionLayer(atom_features=ATOM_FEATURES)
+
+    # Mock initial atom and bond states from embeddings
+    atom_embedding = torch.nn.Embedding(100, ATOM_FEATURES) # Dummy num_classes
+    bond_embedding = torch.nn.Embedding(100, ATOM_FEATURES) # Dummy num_classes
+
+    initial_atom_state = atom_embedding(batch.x)
+    initial_bond_state = bond_embedding(batch.edge_attr)
+    
+    num_atoms = initial_atom_state.shape[0]
+    num_edges = initial_bond_state.shape[0]
+
+    # Pass through the layer
+    new_atom_state, new_bond_state = layer(initial_atom_state, batch.edge_index, initial_bond_state)
+
+    # Verify that the output shapes are identical to the input shapes
+    assert new_atom_state.shape == (num_atoms, ATOM_FEATURES)
+    assert new_bond_state.shape == (num_edges, ATOM_FEATURES)
+
+def test_bde_model_forward_pass_shape(sample_data_batch, mock_tokenizer):
+    """
+    Tests the forward pass of the full BDEModel and verifies the output shape.
+    """
+    batch = sample_data_batch
+    
+    # Get vocabulary sizes from the tokenizer
+    num_atom_classes = mock_tokenizer.atom_num_classes + 1 # +1 for potential new classes from build
+    num_bond_classes = mock_tokenizer.bond_num_classes + 1
+    
+    # Instantiate the full model
+    model = BDEModel(
+        num_atom_classes=num_atom_classes,
+        num_bond_classes=num_bond_classes,
+        atom_features=ATOM_FEATURES,
+        num_messages=6 # As per the original implementation file name
     )
 
-    np.testing.assert_allclose(
-        results[results.molecule == "NCCO"].bde_pred,
-        [90.0, 82.1, 98.2, 99.3, 92.1, 92.5, 105.2],
-        atol=1.0,
-        rtol=0.05,
+    # Perform a forward pass
+    output = model(batch)
+
+    # Verify output shape is a 1D tensor of length num_edges
+    assert output.ndim == 1
+    # Precise validation from the implementation plan
+    assert output.shape[0] == batch.edge_index.shape[1]
+    assert output.shape[0] == batch.edge_attr.shape[0]
+    
+def test_bde_model_with_single_data_object(mock_smiles_data, mock_tokenizer, temp_dataset_dir):
+    """
+    Tests that the BDEModel can process a single Data object in addition to a Batch object.
+    """
+    dataset = BDEDataset(root=temp_dataset_dir, smiles_data=mock_smiles_data, tokenizer=mock_tokenizer)
+    single_data = dataset.get(0) # Get the first data object (CCO)
+
+    # Get vocabulary sizes from the tokenizer
+    num_atom_classes = mock_tokenizer.atom_num_classes + 1
+    num_bond_classes = mock_tokenizer.bond_num_classes + 1
+
+    model = BDEModel(
+        num_atom_classes=num_atom_classes,
+        num_bond_classes=num_bond_classes,
+        atom_features=ATOM_FEATURES,
+        num_messages=2 # Fewer messages for a quicker test
     )
 
+    # Perform a forward pass
+    output = model(single_data)
 
-def test_data_missing():
-    results = model.predict(["CCCCCOC"])
-    assert np.isfinite(results[results.bond_index == 17].bde_pred.iloc[0])
-
-
-def test_duplicates():
-    results = model.predict(["c1ccccc1"], drop_duplicates=True)
-    assert len(results) == 1
-
-    results = model.predict(["c1ccccc1"], drop_duplicates=False)
-    assert len(results) == 6
-
-
-def test_non_canonical_smiles():
-    smiles = "CC(=O)OCC1=C\CC/C(C)=C/CC[C@@]2(C)CC[C@@](C(C)C)(/C=C/1)O2"
-    assert len(model.predict([smiles])) == 24
+    # Verify output shape
+    assert output.ndim == 1
+    assert output.shape[0] == single_data.edge_index.shape[1]
