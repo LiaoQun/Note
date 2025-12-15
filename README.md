@@ -1,8 +1,4 @@
-![ALFABET logo](/docs/logo.svg)
-
-[![PyPI version](https://badge.fury.io/py/alfabet.svg)](https://badge.fury.io/py/alfabet)
-[![Build Status](https://travis-ci.com/NREL/alfabet.svg?branch=master)](https://travis-ci.com/NREL/alfabet)
-
+# This repo is refactor of:
 # A machine-Learning derived, Fast, Accurate Bond dissociation Enthalpy Tool (ALFABET)
 
 This library contains the trained graph neural network model for the prediction of homolytic bond dissociation energies (BDEs) of organic molecules with C, H, N, and O atoms. This package offers a command-line interface to the web-based model predictions at [bde.ml.nrel.gov](https://bde.ml.nrel.gov/).
@@ -26,7 +22,7 @@ The basic interface works as follows, where `predict` expects a list of SMILES s
 ```
 
 The model breaks all single, non-cyclic bonds in the input molecules and calculates their bond dissociation energies. Typical prediction errors are less than 1 kcal/mol. 
-The model is based on Tensorflow (2.x), and makes heavy use of the [neural fingerprint](https://github.com/NREL/nfp) library (0.1.x).
+The model is based on Tensorflow (2.x), and makes heavy use of the [neural fingerprint](https://github.com/NREL/nfp) library (01.x).
 
 For additional details, see the publication:
 St. John, P. C., Guan, Y., Kim, Y., Kim, S., & Paton, R. S. (2020). Prediction of organic homolytic bond dissociation enthalpies at near chemical accuracy with sub-second computational cost. Nature Communications, 11(1). doi:10.1038/s41467-020-16201-z
