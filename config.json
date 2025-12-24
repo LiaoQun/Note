@@ -1,0 +1,22 @@
+{
+    "data": {
+        "data_path": "examples/test_data.csv.gz",
+        "vocab_path": "etc/preprocessor.json",
+        "dataset_dir": "temp_dataset",
+        "test_size": 0.1,
+        "val_size": 0.1,
+        "random_seed": 42,
+        "sample_percentage": 0.01
+    },
+    "model": {
+        "atom_features": 128,
+        "num_messages": 6
+    },
+    "train": {
+        "device": "cuda",
+        "epochs": 100,
+        "lr": 0.001,
+        "batch_size": 64,
+        "model_save_path": "bde_model.pt"
+    }
+}

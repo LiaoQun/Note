@@ -7,8 +7,8 @@
 ✓ 一步一驗收
 ✓ 不准自己擴大 scope
 ✓ **程式碼需包含 Tensor 維度註解**
-✓ 什麼時候必須更新文件
-✓ 請將重構的檔案更新再獨立的資料夾中，並且全部重寫不要import舊的alfabet或是bde_model_methods檔案
+✓ 必須在完成一個步驟後更新 progress.md 文件
+✓ 請將重構的檔案更新在獨立的資料夾中，並且全部重寫不要import舊的alfabet或是bde_model_methods檔案
 
 ## Phase 1: 數據與特徵工程 (Data & Featurization)
 
