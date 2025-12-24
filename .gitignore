@@ -110,3 +110,6 @@ Untitled*
 #Editors
 .idea/
 .vscode/
+
+#Runs
+training_runs/

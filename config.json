@@ -5,8 +5,8 @@
         "dataset_dir": "temp_dataset",
         "test_size": 0.1,
         "val_size": 0.1,
-        "random_seed": 42,
-        "sample_percentage": 0.01
+        "random_seed": 42
+        // "sample_percentage": 0.1
     },
     "model": {
         "atom_features": 128,

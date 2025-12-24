@@ -2,7 +2,6 @@
 This file contains dataclasses for managing model, training, and data configurations.
 """
 from dataclasses import dataclass, field
-from typing import str
 
 @dataclass
 class DataConfig:
@@ -29,6 +28,8 @@ class TrainConfig:
     lr: float = 1e-3
     batch_size: int = 64
     model_save_path: str = 'bde_model.pt'
+    output_dir: str = 'training_runs'
+    early_stopping_patience: int = 10
     
 @dataclass
 class MainConfig:

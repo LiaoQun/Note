@@ -49,30 +49,30 @@ class BDEInteractionLayer(MessagePassing):
                                                and updated bond features.
         """
         # Store original states for residual connections
-        original_x = x
-        original_edge_attr = edge_attr
+        original_x = x # [num_atoms, atom_features]
+        original_edge_attr = edge_attr # [num_edges, atom_features]
 
         # 1. Pre-activation Batch Normalization
-        x = self.atom_batch_norm(x)
-        edge_attr = self.bond_batch_norm(edge_attr)
+        x = self.atom_batch_norm(x) # [num_atoms, atom_features]
+        edge_attr = self.bond_batch_norm(edge_attr) # [num_edges, atom_features]
 
         # 2. Edge Update
         row, col = edge_index
-        source_nodes, target_nodes = x[row], x[col]
+        source_nodes, target_nodes = x[row], x[col] # [num_edges, atom_features]
         
-        edge_mlp_input = torch.cat([source_nodes, target_nodes, edge_attr], dim=-1)
-        new_edge_attr = self.edge_mlp(edge_mlp_input)
+        edge_mlp_input = torch.cat([source_nodes, target_nodes, edge_attr], dim=-1) # [num_edges, 3 * atom_features]
+        new_edge_attr = self.edge_mlp(edge_mlp_input) # [num_edges, atom_features]
         
         # Residual connection for bond state
-        edge_attr = original_edge_attr + new_edge_attr
+        edge_attr = original_edge_attr + new_edge_attr # [num_edges, atom_features]
 
         # 3. Node Update (Message Passing)
         # The propagate call will trigger message(), aggregate(), and update()
         # We pass the updated edge_attr to be used in message creation
-        propagated_messages = self.propagate(edge_index, x=x, edge_attr=edge_attr)
+        propagated_messages = self.propagate(edge_index, x=x, edge_attr=edge_attr) # [num_atoms, atom_features]
 
         # Residual connection for atom state
-        x = original_x + propagated_messages
+        x = original_x + propagated_messages # [num_atoms, atom_features]
         
         return x, edge_attr
 
@@ -89,8 +89,8 @@ class BDEInteractionLayer(MessagePassing):
             torch.Tensor: The message tensor for each edge.
         """
         # Transform source atom features
-        transformed_x_j = self.message_source_transform(x_j)
-        return transformed_x_j * edge_attr
+        transformed_x_j = self.message_source_transform(x_j) # [num_edges, atom_features]
+        return transformed_x_j * edge_attr # [num_edges, atom_features]
 
     def update(self, aggr_out: torch.Tensor) -> torch.Tensor:
         """
@@ -103,7 +103,7 @@ class BDEInteractionLayer(MessagePassing):
         Returns:
             torch.Tensor: The result of the node update MLP.
         """
-        return self.node_mlp(aggr_out)
+        return self.node_mlp(aggr_out) # [num_atoms, atom_features]
 
 
 class BDEModel(nn.Module):
@@ -149,7 +149,7 @@ class BDEModel(nn.Module):
 
         # 2. Run through message passing layers
         for layer in self.interaction_layers:
-            atom_state, bond_state = layer(atom_state, data.edge_index, bond_state)
+            atom_state, bond_state = layer(atom_state, data.edge_index, bond_state) # atom_state: [num_atoms, atom_features], bond_state: [num_edges, atom_features]
 
         # 3. Predict BDE from final bond state
         bde_pred = self.output_mlp(bond_state) # [num_edges, 1]
