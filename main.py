@@ -20,6 +20,58 @@ from src.data.dataset import BDEDataset
 from src.models.mpnn import BDEModel
 from src.training.trainer import Trainer
 
+
+def load_and_merge_data(data_paths: List[str]) -> pd.DataFrame:
+    """
+    Loads data from a list of CSV file paths, merges them, and cleans the data.
+
+    Args:
+        data_paths (List[str]): A list of file paths to the CSV data.
+
+    Returns:
+        pd.DataFrame: A single, cleaned DataFrame containing all the data.
+    """
+    if not data_paths:
+        raise ValueError("No data paths provided in the configuration.")
+
+    df_list = []
+    print("Loading data from the following paths:")
+    for path in data_paths:
+        if os.path.exists(path):
+            print(f" - Loading {path}...")
+            try:
+                df_list.append(pd.read_csv(path))
+            except Exception as e:
+                print(f"Warning: Could not read file {path}. Error: {e}. Skipping.")
+        else:
+            print(f"Warning: Data file not found at: {path}. Skipping.")
+    
+    if not df_list:
+        raise FileNotFoundError("No valid data files could be loaded from the specified paths.")
+
+    print("\nMerging and cleaning data...")
+    merged_df = pd.concat(df_list, ignore_index=True)
+    print(f"Total records loaded: {len(merged_df)}")
+
+    # Handle missing values
+    initial_rows = len(merged_df)
+    merged_df.dropna(subset=['molecule', 'bond_index', 'bde'], inplace=True)
+    rows_after_na = len(merged_df)
+    if initial_rows > rows_after_na:
+        print(f"Dropped {initial_rows - rows_after_na} rows with missing key values (molecule, bond_index, or bde).")
+
+    # Handle duplicates
+    initial_rows = len(merged_df)
+    merged_df.drop_duplicates(subset=['molecule', 'bond_index'], keep='first', inplace=True)
+    rows_after_duplicates = len(merged_df)
+    if initial_rows > rows_after_duplicates:
+        print(f"Dropped {initial_rows - rows_after_duplicates} duplicate records (based on molecule and bond_index). Kept first occurrence.")
+
+    print(f"Final cleaned dataset contains {len(merged_df)} records.")
+    return merged_df
+
+
+
 def prepare_data(df: pd.DataFrame) -> List[Tuple[str, Dict[Tuple[int, int], float]]]:
     """
     Processes a DataFrame into a list of (SMILES, bde_labels_dict) tuples.
@@ -70,11 +122,12 @@ def run_training(cfg: MainConfig):
     os.makedirs(run_dir, exist_ok=True)
     print(f"Saving all artifacts to: {run_dir}")
     
-    # 2. Load and Prepare Data
-    print(f"Loading raw data from {cfg.data.data_path}...")
-    if not os.path.exists(cfg.data.data_path):
-        raise FileNotFoundError(f"Data file not found at: {cfg.data.data_path}")
-    df = pd.read_csv(cfg.data.data_path)
+    # 2. Load, Merge, and Clean Data
+    df = load_and_merge_data(cfg.data.data_paths)
+
+    if df.empty:
+        print("Stopping run: No data available after loading and cleaning.")
+        return
 
     if 0 < cfg.data.sample_percentage < 1.0:
         print(f"Sampling {cfg.data.sample_percentage * 100:.2f}% of unique molecules...")

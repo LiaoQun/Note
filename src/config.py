@@ -2,11 +2,12 @@
 This file contains dataclasses for managing model, training, and data configurations.
 """
 from dataclasses import dataclass, field
+from typing import List
 
 @dataclass
 class DataConfig:
     """Configuration for data loading and processing."""
-    data_path: str = 'examples/test_data.csv.gz'
+    data_paths: List[str] = field(default_factory=lambda: ['examples/test_data.csv.gz'])
     vocab_path: str = 'etc/preprocessor.json'
     dataset_dir: str = 'temp_dataset'
     test_size: float = 0.1

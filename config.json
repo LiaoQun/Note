@@ -1,6 +1,8 @@
 {
   "data": {
-    "data_path": "bde_model_methods/rdf_data_190531.csv.gz",
+    "data_paths": [
+      "bde_model_methods/rdf_data_190531.csv.gz"
+    ],
     "vocab_path": "etc/preprocessor.json",
     "dataset_dir": "temp_dataset",
     "test_size": 0.1,
