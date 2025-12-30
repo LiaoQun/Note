@@ -1,7 +1,9 @@
 import os
+import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.metrics import r2_score, mean_squared_error
 
 from src.config import TrainConfig
@@ -103,31 +105,59 @@ class Trainer:
         self.model.load_state_dict(torch.load(self.model_save_path))
         self.model.eval()
         
-        all_preds = []
-        all_targets = []
-        with torch.no_grad():
-            for batch in tqdm(self.test_loader, desc="[Test]"):
-                batch = batch.to(self.device)
-                pred = self.model(batch)
-                if batch.mask.sum() > 0:
-                    all_preds.append(pred[batch.mask].cpu())
-                    all_targets.append(batch.y[batch.mask].cpu())
-
-        if not all_preds:
-            print("No predictions were made on the test set. Skipping final evaluation.")
-            return
-
-        all_preds = torch.cat(all_preds).numpy()
-        all_targets = torch.cat(all_targets).numpy()
+    def evaluate(self):
+        """
+        Evaluates the best model on the test set and saves the results.
+        Also generates a parity plot for train, val, and test sets.
+        """
+        print(f"\nLoading best model from {self.model_save_path} and evaluating on all sets...")
+        self.model.load_state_dict(torch.load(self.model_save_path, map_location=self.device))
+        self.model.eval()
         
-        # Calculate metrics
-        mae = float(F.l1_loss(torch.from_numpy(all_preds), torch.from_numpy(all_targets)))
-        mse = mean_squared_error(all_targets, all_preds)
-        rmse = mse**0.5
-        r2 = r2_score(all_targets, all_preds)
+        # Helper function to get predictions and targets for a given loader
+        def _get_preds_targets(loader):
+            y_preds = []
+            y_trues = []
+            with torch.no_grad():
+                for batch in tqdm(loader, desc=f"[Predicting on {loader.dataset.root.split('/')[-1]} set]"):
+                    batch = batch.to(self.device)
+                    pred = self.model(batch)
+                    if batch.mask.sum() > 0:
+                        y_preds.append(pred[batch.mask].cpu().numpy())
+                        y_trues.append(batch.y[batch.mask].cpu().numpy())
+            if not y_preds:
+                return np.array([]), np.array([])
+            return np.concatenate(y_trues), np.concatenate(y_preds)
 
-        metrics = {'mae': mae, 'mse': mse, 'rmse': rmse, 'r2': r2}
-        
-        # Save metrics and parity plot
-        save_test_metrics(metrics, self.run_dir)
-        plot_parity(all_targets, all_preds, self.run_dir)
+        # Get predictions and targets for each set
+        y_true_train, y_pred_train = _get_preds_targets(self.train_loader)
+        y_true_val, y_pred_val = _get_preds_targets(self.val_loader)
+        y_true_test, y_pred_test = _get_preds_targets(self.test_loader)
+
+        # Collect results for plotting
+        results_for_plotting = {
+            "train": (y_true_train, y_pred_train),
+            "validation": (y_true_val, y_pred_val),
+            "test": (y_true_test, y_pred_test),
+        }
+
+        # Save test metrics
+        if y_true_test.size > 0:
+            mae_test = mean_absolute_error(y_true_test, y_pred_test)
+            mse_test = mean_squared_error(y_true_test, y_pred_test)
+            rmse_test = np.sqrt(mse_test)
+            r2_test = r2_score(y_true_test, y_pred_test)
+
+            metrics = {'mae': mae_test, 'mse': mse_test, 'rmse': rmse_test, 'r2': r2_test}
+            save_test_metrics(metrics, self.run_dir)
+        else:
+            print("No data in test set for metric calculation.")
+            
+        # Generate parity plot
+        plot_parity(
+            results=results_for_plotting,
+            title="BDE Prediction Parity Plot",
+            output_path=os.path.join(self.run_dir, "parity_plot.png")
+        )
+
+

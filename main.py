@@ -94,9 +94,24 @@ def run_training(cfg: MainConfig):
     print(f"Training set: {len(train_data)} | Validation set: {len(val_data)} | Test set: {len(test_data)}")
 
     # 3. Initialize Tokenizer, Datasets, and DataLoaders
-    print("Initializing tokenizer and datasets...")
-    tokenizer = Tokenizer(vocab_filepath=cfg.data.vocab_path)
-    
+    print("Initializing tokenizer...")
+    if cfg.data.vocab_path and os.path.exists(cfg.data.vocab_path):
+        print(f"Loading tokenizer from predefined vocabulary: {cfg.data.vocab_path}")
+        tokenizer = Tokenizer(vocab_filepath=cfg.data.vocab_path)
+    else:
+        print("No valid vocabulary path provided. Building tokenizer from training data...")
+        # Extract SMILES from the training set to build the vocab
+        train_smiles = [data[0] for data in train_data]
+        
+        tokenizer = Tokenizer()
+        tokenizer.build_from_smiles(train_smiles)
+        
+        # Save the newly created vocab to the run-specific directory
+        vocab_save_path = os.path.join(run_dir, "vocab.json")
+        tokenizer.save(vocab_save_path)
+        print(f"New vocabulary saved to: {vocab_save_path}")
+
+    print("Initializing datasets...")
     train_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'train'), smiles_data=train_data, tokenizer=tokenizer)
     val_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'val'), smiles_data=val_data, tokenizer=tokenizer)
     test_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'test'), smiles_data=test_data, tokenizer=tokenizer)
