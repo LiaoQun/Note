@@ -1,4 +1,8 @@
 # some need to modify
-load config.json file-> load config.py
-parity plot (train valid two plot)
-training data change to bonds_for_neighbors.csv.gz(in bde_model_methods)
+(X) multiple data input
+() save predictions data sets (train/valid/test), need record original smiles and fragments
+() two evaluate function need to be removed
+() save config.py in every training runs
+() implement the BDE predictor: input smiles list to predict all BDEs
+Molecule class need canon first, then do other thing
+
