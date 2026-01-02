@@ -7,14 +7,17 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.metrics import r2_score, mean_squared_error
 
 from src.config import TrainConfig
-from src.utils.reporting import save_training_log, save_test_metrics
+from src.utils.reporting import save_training_log
 from src.utils.plotting import plot_training_curve, plot_parity
+from src.inference.predictor import Predictor
 
 class Trainer:
     """
     Handles the model training, validation, and evaluation pipeline.
     """
-    def __init__(self, model, optimizer, train_loader, val_loader, test_loader, device, cfg: TrainConfig, run_dir: str):
+    def __init__(self, model, optimizer, train_loader, val_loader, test_loader, 
+                 device, cfg: TrainConfig, run_dir: str, full_dataset_df: pd.DataFrame, 
+                 data_splits: Dict[str, List], vocab_path: str):
         self.model = model
         self.optimizer = optimizer
         self.train_loader = train_loader
@@ -24,6 +27,9 @@ class Trainer:
         self.cfg = cfg
         self.run_dir = run_dir
         self.model_save_path = os.path.join(run_dir, cfg.model_save_path)
+        self.vocab_path = vocab_path
+        self.full_dataset_df = full_dataset_df
+        self.data_splits = data_splits
 
     def train(self):
         """
@@ -107,57 +113,66 @@ class Trainer:
         
     def evaluate(self):
         """
-        Evaluates the best model on the test set and saves the results.
-        Also generates a parity plot for train, val, and test sets.
+        Evaluates the best model on all data splits (train, val, test),
+        saves the full predictions, and generates plots.
         """
-        print(f"\nLoading best model from {self.model_save_path} and evaluating on all sets...")
-        self.model.load_state_dict(torch.load(self.model_save_path, map_location=self.device))
-        self.model.eval()
+        print(f"\nLoading best model from {self.model_save_path} for final evaluation...")
         
-        # Helper function to get predictions and targets for a given loader
-        def _get_preds_targets(loader):
-            y_preds = []
-            y_trues = []
-            with torch.no_grad():
-                for batch in tqdm(loader, desc=f"[Predicting on {loader.dataset.root.split('/')[-1]} set]"):
-                    batch = batch.to(self.device)
-                    pred = self.model(batch)
-                    if batch.mask.sum() > 0:
-                        y_preds.append(pred[batch.mask].cpu().numpy())
-                        y_trues.append(batch.y[batch.mask].cpu().numpy())
-            if not y_preds:
-                return np.array([]), np.array([])
-            return np.concatenate(y_trues), np.concatenate(y_preds)
+        try:
+            # 1. Initialize predictor with the best model
+            predictor = Predictor(
+                model_path=self.model_save_path,
+                vocab_path=self.vocab_path,
+                device=self.device
+            )
+        except FileNotFoundError as e:
+            print(f"Could not initialize predictor: {e}. Aborting evaluation.")
+            return
 
-        # Get predictions and targets for each set
-        y_true_train, y_pred_train = _get_preds_targets(self.train_loader)
-        y_true_val, y_pred_val = _get_preds_targets(self.val_loader)
-        y_true_test, y_pred_test = _get_preds_targets(self.test_loader)
+        results_for_plotting = {}
+        
+        # 2. Iterate through each data split, make predictions, and save results
+        for split_name, data_list in self.data_splits.items():
+            print(f"\n--- Predicting on {split_name} set ---")
+            if not data_list:
+                print(f"{split_name} set is empty. Skipping.")
+                continue
 
-        # Collect results for plotting
-        results_for_plotting = {
-            "train": (y_true_train, y_pred_train),
-            "validation": (y_true_val, y_pred_val),
-            "test": (y_true_test, y_pred_test),
-        }
-
-        # Save test metrics
-        if y_true_test.size > 0:
-            mae_test = mean_absolute_error(y_true_test, y_pred_test)
-            mse_test = mean_squared_error(y_true_test, y_pred_test)
-            rmse_test = np.sqrt(mse_test)
-            r2_test = r2_score(y_true_test, y_pred_test)
-
-            metrics = {'mae': mae_test, 'mse': mse_test, 'rmse': rmse_test, 'r2': r2_test}
-            save_test_metrics(metrics, self.run_dir)
-        else:
-            print("No data in test set for metric calculation.")
+            # Get unique SMILES for the current split
+            smiles_list = sorted(list(set([item[0] for item in data_list])))
             
-        # Generate parity plot
-        plot_parity(
-            results=results_for_plotting,
-            title="BDE Prediction Parity Plot",
-            output_path=os.path.join(self.run_dir, "parity_plot.png")
-        )
+            # Get rich prediction dataframe using the predictor
+            pred_df = predictor.predict(smiles_list, drop_duplicates=False)
+
+            # Merge with original dataframe to get ground truth `bde`
+            # The original df has all ground truth data
+            merged_df = pd.merge(
+                pred_df,
+                self.full_dataset_df[['molecule', 'bond_index', 'bde']],
+                on=['molecule', 'bond_index'],
+                how='inner' # Use inner merge to only keep bonds with known ground truth
+            )
+
+            # Save the detailed predictions to a CSV file
+            output_path = os.path.join(self.run_dir, f'predictions_{split_name}.csv')
+            merged_df.to_csv(output_path, index=False)
+            print(f"Saved detailed predictions for {split_name} set to {output_path}")
+
+            # Prepare data for parity plot
+            if not merged_df.empty:
+                y_true = merged_df['bde'].values
+                y_pred = merged_df['bde_pred'].values
+                results_for_plotting[split_name] = (y_true, y_pred)
+        
+        # 3. Generate parity plot
+        if results_for_plotting:
+            print("\nGenerating parity plot...")
+            plot_parity(
+                results=results_for_plotting,
+                title="BDE Prediction Parity Plot",
+                output_path=os.path.join(self.run_dir, "parity_plot.png")
+            )
+        else:
+            print("No results to plot.")
 
 

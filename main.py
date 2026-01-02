@@ -107,7 +107,7 @@ def prepare_data(df: pd.DataFrame) -> List[Tuple[str, Dict[Tuple[int, int], floa
         
     return smiles_data
 
-def run_training(cfg: MainConfig):
+def run_training(cfg: MainConfig, config_path: str):
     """
     Main function to set up and run the training and evaluation pipeline.
     """
@@ -121,6 +121,10 @@ def run_training(cfg: MainConfig):
     run_dir = os.path.join(cfg.train.output_dir, run_timestamp)
     os.makedirs(run_dir, exist_ok=True)
     print(f"Saving all artifacts to: {run_dir}")
+
+    # Save the config file for this run for reproducibility
+    shutil.copy(config_path, os.path.join(run_dir, 'config.json'))
+    print(f"Saved configuration to {run_dir}")
     
     # 2. Load, Merge, and Clean Data
     df = load_and_merge_data(cfg.data.data_paths)
@@ -151,6 +155,7 @@ def run_training(cfg: MainConfig):
     if cfg.data.vocab_path and os.path.exists(cfg.data.vocab_path):
         print(f"Loading tokenizer from predefined vocabulary: {cfg.data.vocab_path}")
         tokenizer = Tokenizer(vocab_filepath=cfg.data.vocab_path)
+        effective_vocab_path = cfg.data.vocab_path
     else:
         print("No valid vocabulary path provided. Building tokenizer from training data...")
         # Extract SMILES from the training set to build the vocab
@@ -163,6 +168,7 @@ def run_training(cfg: MainConfig):
         vocab_save_path = os.path.join(run_dir, "vocab.json")
         tokenizer.save(vocab_save_path)
         print(f"New vocabulary saved to: {vocab_save_path}")
+        effective_vocab_path = vocab_save_path
 
     print("Initializing datasets...")
     train_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'train'), smiles_data=train_data, tokenizer=tokenizer)
@@ -193,7 +199,11 @@ def run_training(cfg: MainConfig):
         test_loader=test_loader,
         device=device,
         cfg=cfg.train,
-        run_dir=run_dir
+        run_dir=run_dir,
+        # Pass additional data for final evaluation and saving
+        full_dataset_df=df,
+        data_splits={'train': train_data, 'val': val_data, 'test': test_data},
+        vocab_path=effective_vocab_path
     )
     
     trainer.train()
@@ -236,7 +246,7 @@ def main():
 
 
     try:
-        run_training(config)
+        run_training(config, args.config_path)
     finally:
         # Cleanup
         if os.path.exists(config.data.dataset_dir):
