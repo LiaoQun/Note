@@ -52,7 +52,7 @@
     * 繼承 `MessagePassing` 類別。
     * 實作原版 `message_block` 邏輯：先執行 Edge Update (MLP)，再執行 Node Update (Message Passing)。
     * 加入 Residual Connections 和 Batch Normalization。
-    * **(待釐清)** `message_block` 的具體數學細節與 `forward` 函數的回傳值。
+    * **(註)** `message_block` 的具體數學細節與 `forward` 函數的回傳值，待後續討論。
 * **怎麼驗 (How to Verify)**: 
     * 假資料測試：輸入隨機生成的 `x` (節點特徵) 和 `edge_attr` (邊特徵)。
     * 驗證：通過一層後，輸出 Tensor 的形狀應與輸入完全一致 (Size check)。
@@ -60,9 +60,10 @@
 ### Step 4: 組裝完整模型 (BDEModel)
 * **做什麼 (What)**: 
     * 定義 `Embedding` 層，用於 `x` (Atom ID) 和 `edge_attr` (Bond ID)。
-    * **(待釐清)** `BondMean` Embedding 的具體用途與計算邏輯。
+    * `BondMean` Embedding 的具體用途與計算邏輯已釐清。
     * 堆疊 N 層 `BDEInteractionLayer`。
-    * **輸出層**: 實作一個 `Dense` MLP，其輸入為最後一層交互層輸出的**邊特徵 (`edge_attr`)**。
+    * **輸出層**: 實作一個 `Dense` MLP，其輸入為最後一層交互層輸出的**邊特徵 (`edge_attr`)**，此為模型預測的重點。
+    * **維度註解**: 按要求增加 Tensor 維度註解。
 * **怎麼驗 (How to Verify)**: 
     * 前向傳播測試：輸入 Step 2 產生的一個 Batch Data。
     * 驗證：`model(data)` 輸出形狀應為一維向量 `[total_num_edges_in_batch]`。
@@ -74,7 +75,7 @@
 * **做什麼 (What)**: 
     * 撰寫 PyTorch 訓練迴圈。
     * **Loss 計算**: Loss 函數應為 MAE。計算時，利用 `data.mask` 過濾出有標籤的預測值與真實值。
-        * **實作公式**: `loss = F.l1_loss(predictions[data.mask], data.y[data.mask])`
+        * **實作公式**: `loss = F.l1_loss(predictions[data.mask], data.y[data.mask])` (註：此方法已確認)
 * **怎麼驗 (How to Verify)**: 
     * Overfit 測試：使用 10 筆假資料進行訓練。
     * 驗證：Loss 在 50-100 個 Epoch 內應大幅下降趨近於 0。
@@ -83,7 +84,7 @@
 * **做什麼 (What)**: 
     * 載入完整的 CSV 訓練數據集。
     * **數據切分**:
-        * 在讀取數據後，設定一個固定的 `random_seed`。
+        * **(註)** 必須設定 `random_seed` 以確保實驗可重現。
         * 將數據集**隨機打亂**並切分為 訓練集 (80%)、驗證集 (10%)、測試集 (10%)。
     * 執行完整訓練流程，並記錄 Validation Set 的 MAE。
 * **怎麼驗 (How to Verify)**: 
