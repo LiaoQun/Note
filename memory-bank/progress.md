@@ -46,8 +46,7 @@
 
 ## Phase 2: 擴展性與穩健性 (Scalability & Robustness)
 - [ ] **數據處理與擴充**:
-    - [ ] 支援超大型數據集：考慮將 `BDEDataset` 從 `InMemoryDataset` 轉換為標準的 PyG `Dataset`。
-    - [ ] 多重數據源輸入：擴展數據加載功能，支持從多個檔案或多種格式（如 CSV, SDF, JSON）讀取數據。
+    - [x] 支援超大型數據集：考慮將 `BDEDataset` 從 `InMemoryDataset` 轉換為標準的 PyG `Dataset`。
 - [ ] **實驗管理與 ML Ops**:
     - [ ] 集成實驗追蹤平台（如 MLflow, TensorBoard, 或 W&B）。
     - [ ] 實施模型版本管理。

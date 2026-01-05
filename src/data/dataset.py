@@ -3,18 +3,20 @@ import json
 from typing import Dict, List, Tuple, Union
 
 import torch
-from torch_geometric.data import InMemoryDataset, Data
+from torch_geometric.data import Dataset, Data # Changed from InMemoryDataset
 from rdkit import Chem
 from rdkit.Chem.rdchem import Bond
+from tqdm import tqdm # Added for process method progress bar
 
-from src.features.featurizer import atom_featurizer, bond_featurizer, Tokenizer # Import featurizers and Tokenizer
+from src.features.featurizer import atom_featurizer, bond_featurizer, Tokenizer
 
 
-class BDEDataset(InMemoryDataset):
+class BDEDataset(Dataset): # Inherit from Dataset
     """
-    A PyTorch Geometric InMemoryDataset for BDE prediction.
+    A PyTorch Geometric Dataset for BDE prediction.
     Processes SMILES strings into PyG Data objects with atom and bond features,
-    BDE labels, and a loss mask.
+    BDE labels, and a loss mask. Each Data object is saved as a separate file,
+    allowing for larger-than-memory datasets.
     """
     def __init__(self, root: str, smiles_data: List[Tuple[str, Dict[Tuple[int, int], float]]], tokenizer: Tokenizer, transform=None, pre_transform=None):
         """
@@ -29,7 +31,7 @@ class BDEDataset(InMemoryDataset):
         self.smiles_data = smiles_data
         self.tokenizer = tokenizer
         super().__init__(root, transform, pre_transform)
-        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
+        # self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False) # Removed for Dataset
 
     @property
     def raw_file_names(self) -> List[str]:
@@ -38,30 +40,63 @@ class BDEDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self) -> List[str]:
-        # Use a hash of the smiles_data for unique processing, or a fixed name
-        # For simplicity, let's use a fixed name for now.
-        return ['data.pt']
+        # Return a list of names for each individual processed graph file
+        # This assumes self.smiles_data is known at init time to get the count
+        return [f'data_{i}.pt' for i in range(len(self.smiles_data))]
+
+    def download(self):
+        # Data is passed directly, so no download needed
+        pass
 
     def process(self):
         """
-        Processes SMILES data into PyG Data objects and saves them.
+        Processes SMILES data into PyG Data objects and saves each one as a separate .pt file.
         """
-        data_list = []
-        for i, (smiles, bde_labels_dict) in enumerate(self.smiles_data):
+        # Create processed directory if it doesn't exist
+        if not os.path.exists(self.processed_dir):
+            os.makedirs(self.processed_dir)
+
+        for i, (smiles, bde_labels_dict) in enumerate(tqdm(self.smiles_data, desc="Processing SMILES to PyG Data")):
+            processed_path = os.path.join(self.processed_dir, f'data_{i}.pt')
+            if os.path.exists(processed_path):
+                continue # Skip if already processed
+
             try:
                 data = self._mol_to_pyg_data(smiles, bde_labels_dict)
                 if data is not None:
-                    data_list.append(data)
+                    # Apply pre_transform if specified
+                    if self.pre_transform is not None:
+                        data = self.pre_transform(data)
+                    torch.save(data, processed_path)
             except ValueError as e:
                 print(f"Skipping SMILES '{smiles}' (index {i}) due to error: {e}")
                 continue
         
-        if self.pre_filter is not None:
-            data_list = [data for data in data_list if self.pre_filter(data)]
-        if self.pre_transform is not None:
-            data_list = [self.pre_transform(data) for data in data_list]
+        # After processing, apply pre_filter if specified.
+        # Note: For Dataset, pre_filter is usually applied when iterating or calling get(),
+        # but if we want to filter out files that failed to process, we do it here.
+        # For simplicity, we assume process() only saves valid data.
 
-        torch.save(self.collate(data_list), self.processed_paths[0])
+    def len(self) -> int:
+        """Returns the number of graphs in the dataset."""
+        return len(self.processed_file_names)
+
+    def get(self, idx: int) -> Data:
+        """Loads and returns the Data object at the given index."""
+        # Ensure the index is within bounds
+        if not (0 <= idx < len(self)):
+            raise IndexError(f"Index {idx} is out of bounds for dataset of size {len(self)}")
+        
+        # Construct the path for the specific processed file
+        file_path = os.path.join(self.processed_dir, self.processed_file_names[idx])
+        
+        # Load the Data object
+        data = torch.load(file_path)
+        
+        # Apply transform if specified
+        if self.transform is not None:
+            data = self.transform(data)
+        return data
 
     def _mol_to_pyg_data(self, smiles: str, bde_labels_dict: Dict[Tuple[int, int], float]) -> Union[Data, None]:
         """
