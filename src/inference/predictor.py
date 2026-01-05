@@ -18,6 +18,7 @@ from src.models.mpnn import BDEModel
 def _featurize_mol_for_inference(mol: Chem.Mol, tokenizer: Tokenizer, canonical_smiles: str) -> Data:
     """
     Converts a single RDKit Mol object into a PyG Data object for inference.
+    Crucially, it creates a mapping from PyG's internal edge order back to RDKit's original bond indices.
     
     Args:
         mol (Chem.Mol): The input RDKit molecule, with hydrogens added.
@@ -34,22 +35,27 @@ def _featurize_mol_for_inference(mol: Chem.Mol, tokenizer: Tokenizer, canonical_
     # Edge features
     edge_indices = []
     edge_attrs = []
+    # bond_indices_map is essential for mapping model predictions back to original RDKit bonds.
+    # It stores the RDKit bond index for each directed edge in the order they are added.
     bond_indices_map = [] # To map model output back to original bond indices
 
     for bond in mol.GetBonds():
         u, v = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
         
-        # Forward edge
+        # Forward edge (u -> v)
         edge_indices.append((u, v))
         edge_attrs.append(tokenizer.tokenize_bond(bond_featurizer(bond, flipped=False)))
+        # Map this directed edge back to the original RDKit bond index
         bond_indices_map.append(bond.GetIdx())
         
-        # Backward edge
+        # Backward edge (v -> u)
         edge_indices.append((v, u))
         edge_attrs.append(tokenizer.tokenize_bond(bond_featurizer(bond, flipped=True)))
+        # Map this directed edge back to the same original RDKit bond index
         bond_indices_map.append(bond.GetIdx())
 
     if not edge_indices:
+        # Handle cases where molecule has no bonds (e.g., single atom)
         edge_index = torch.empty((2, 0), dtype=torch.long)
         edge_attr = torch.empty((0,), dtype=torch.long)
     else:
@@ -57,7 +63,7 @@ def _featurize_mol_for_inference(mol: Chem.Mol, tokenizer: Tokenizer, canonical_
         edge_attr = torch.LongTensor(edge_attrs)
 
     data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
-    data.bond_indices_map = torch.LongTensor(bond_indices_map)
+    data.bond_indices_map = torch.LongTensor(bond_indices_map) # Store the mapping in the Data object
     data.original_input_smiles = canonical_smiles # Store canonical smiles for mapping back
     
     return data
@@ -138,28 +144,26 @@ class Predictor:
             raw_predictions = self.model(batch) # Tensor of predictions for all edges in batch
 
         # 3. Map predictions back to original molecule and bond indices
-        # Get molecule index for each edge in the batch
-        # batch.batch[node_idx] gives the graph_idx (0, 1, 2... for each molecule in the batch)
-        # We need the molecule's canonical SMILES for merging
-        
         preds_records = []
         start_edge_idx = 0
         for i, data in enumerate(all_data_list):
             num_edges = data.edge_index.size(1) # Number of edges for this specific graph
             end_edge_idx = start_edge_idx + num_edges
 
-            # Get predictions for this specific graph
+            # Extract raw predictions for the current molecule's graph
             graph_preds = raw_predictions[start_edge_idx:end_edge_idx]
+            # Retrieve the bond_indices_map created during featurization for this graph
             graph_bond_indices = data.bond_indices_map.cpu().numpy()
 
-            # Create temporary DataFrame for this graph's predictions
+            # Create a temporary DataFrame to associate predictions with their original RDKit bond indices
             graph_preds_df = pd.DataFrame({
                 'molecule': data.original_input_smiles,
                 'bond_index': graph_bond_indices,
                 'bde_pred': graph_preds.cpu().numpy()
             })
             
-            # Average predictions for the two directions of each bond, per molecule
+            # Group by molecule and bond_index to average predictions for the two directed edges
+            # (forward and backward) that correspond to a single original RDKit bond.
             bde_preds_by_bond = graph_preds_df.groupby(['molecule', 'bond_index'])['bde_pred'].mean().reset_index()
             preds_records.append(bde_preds_by_bond)
             
@@ -167,7 +171,8 @@ class Predictor:
             
         final_bde_preds = pd.concat(preds_records, ignore_index=True) if preds_records else pd.DataFrame()
 
-        # 4. Merge predictions with fragment info and deduplicate
+        # 4. Merge the averaged BDE predictions with the detailed fragment information
+        # This step ensures the predicted BDE is correctly associated with its fragments.
         result_df = pd.merge(all_fragments_df, final_bde_preds, on=['molecule', 'bond_index'], how='left')
 
         # Drop the now-redundant bde column from the template if exists
