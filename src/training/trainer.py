@@ -1,8 +1,10 @@
 import os
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+from typing import Dict, List
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.metrics import r2_score, mean_squared_error
 
@@ -103,14 +105,6 @@ class Trainer:
                     total_loss += loss.item() * batch.num_graphs
         return total_loss / len(self.val_loader.dataset) if len(self.val_loader.dataset) > 0 else 0
 
-    def evaluate(self):
-        """
-        Evaluates the best model on the test set and saves the results.
-        """
-        print(f"\nLoading best model from {self.model_save_path} and evaluating on test set...")
-        self.model.load_state_dict(torch.load(self.model_save_path))
-        self.model.eval()
-        
     def evaluate(self):
         """
         Evaluates the best model on all data splits (train, val, test),

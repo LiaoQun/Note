@@ -23,7 +23,8 @@ from src.training.trainer import Trainer
 
 def load_and_merge_data(data_paths: List[str]) -> pd.DataFrame:
     """
-    Loads data from a list of CSV file paths, merges them, and cleans the data.
+    Loads data from a list of CSV file paths, merges them, canonicalizes SMILES,
+    and cleans the data.
 
     Args:
         data_paths (List[str]): A list of file paths to the CSV data.
@@ -56,16 +57,31 @@ def load_and_merge_data(data_paths: List[str]) -> pd.DataFrame:
     # Handle missing values
     initial_rows = len(merged_df)
     merged_df.dropna(subset=['molecule', 'bond_index', 'bde'], inplace=True)
-    rows_after_na = len(merged_df)
-    if initial_rows > rows_after_na:
-        print(f"Dropped {initial_rows - rows_after_na} rows with missing key values (molecule, bond_index, or bde).")
+    if initial_rows > len(merged_df):
+        print(f"Dropped {initial_rows - len(merged_df)} rows with missing key values (molecule, bond_index, or bde).")
 
-    # Handle duplicates
+    # --- Canonicalize SMILES ---
+    print("Canonicalizing SMILES strings...")
+    
+    def canonicalize(smi):
+        try:
+            mol = Chem.MolFromSmiles(smi)
+            return Chem.MolToSmiles(mol, canonical=True) if mol else None
+        except Exception:
+            return None
+
+    initial_rows = len(merged_df)
+    merged_df['molecule'] = merged_df['molecule'].apply(canonicalize)
+    merged_df.dropna(subset=['molecule'], inplace=True)
+    if initial_rows > len(merged_df):
+        print(f"Dropped {initial_rows - len(merged_df)} rows due to invalid/unparsable SMILES strings.")
+
+    # --- Handle duplicates ---
+    # First pass: drop duplicates after loading
     initial_rows = len(merged_df)
     merged_df.drop_duplicates(subset=['molecule', 'bond_index'], keep='first', inplace=True)
-    rows_after_duplicates = len(merged_df)
-    if initial_rows > rows_after_duplicates:
-        print(f"Dropped {initial_rows - rows_after_duplicates} duplicate records (based on molecule and bond_index). Kept first occurrence.")
+    if initial_rows > len(merged_df):
+        print(f"Dropped {initial_rows - len(merged_df)} duplicate records (based on molecule and bond_index).")
 
     print(f"Final cleaned dataset contains {len(merged_df)} records.")
     return merged_df
