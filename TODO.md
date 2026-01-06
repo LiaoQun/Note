@@ -2,7 +2,9 @@
 
 ## 數據處理與擴充 (Data Processing & Extensions)
 - [x] **數據預處理**: 在進行任何特徵提取前，應先將 SMILES 字符串標準化 (Canonicalization)。
-- [ ] **支援超大型數據集**: 考慮將 `BDEDataset` 從 `InMemoryDataset` 轉換為標準的 PyG `Dataset`，以支持處理超出記憶體容量的數據集。
+- [ ] **支援超大型數據集與高效加載**:
+    - 轉換 `BDEDataset` 為標準 PyG `Dataset`，以支持處理超出記憶體容量的數據集。
+    - 在實現的同時，**必須** 配合 `DataLoader` 的 `num_workers` 參數進行優化，以隱藏磁碟 I/O 延遲，確保高效數據加載。
 - [ ] **數據增強 (Data Augmentation)**: 導入如 SMILES 隨機化等策略，以提升模型的泛化能力。
 
 ## 實驗管理與 ML Ops (Experiment Management & ML Ops)
@@ -22,7 +24,7 @@
 - [ ] **實現多 GPU 訓練**: 考慮加入多 GPU 訓練功能，以加速在大型模型或數據集上的訓練過程。
 
 ## 推論與腳本 (Inference & Scripts)
-- [ ] **完善 BDE 預測器**: 實現或修復 BDE 預測器的功能，確保能正確處理 SMILES 列表輸入、去重、以及潛在的 `fragment_bond_indices` 問題。
+- [x] **完善 BDE 預測器**: 實現或修復 BDE 預測器的功能，確保能正確處理 SMILES 列表輸入、去重、以及潛在的 `fragment_bond_indices` 問題。(已增加 `is_valid` 欄位功能)
 - [x] **優化 `create_training_template.py`**: 引入命令行參數，使其能從命令行接收 SMILES 輸入並指定輸出路徑。
 - [x] **優化 `predict.py`**:
     - [x] 簡化模型加載邏輯，允許通過 `--run_dir` 參數直接指向訓練運行目錄。
@@ -31,6 +33,7 @@
 
 ## 程式碼重構與清理 (Code Refactoring & Cleanup)
 - [x] **移除重複的 `evaluate` 函數**: 在代碼中存在兩個 `evaluate` 函數，需要移除其中一個以保持代碼整潔。
+- [x] **重構 `mol_to_graph` 轉換邏輯**: 將 `src/data/dataset.py` 和 `src/inference/predictor.py` 中重複的分子到圖轉換邏輯，提取到 `src/features/featurizer.py` 中的共用函數 `mol_to_graph`，並讓兩邊的模塊都調用此函數，以遵循 DRY 原則。
 
 ## 測試與品質保證 (Testing & Quality Assurance)
 - [ ] **擴充單元測試覆蓋率**: 為核心的數據處理、特徵提取和模型組件編寫更全面的單元測試。

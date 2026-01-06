@@ -1,7 +1,7 @@
 {
   "data": {
     "data_paths": [
-      "bde_model_methods/rdf_data_190531.csv.gz"
+      "examples/test_data.csv.gz"
     ],
     "vocab_path": "etc/preprocessor.json",
     "dataset_dir": "temp_dataset",
@@ -16,7 +16,7 @@
   },
   "train": {
     "device": "cuda",
-    "epochs": 100,
+    "epochs": 2,
     "lr": 0.001,
     "batch_size": 64,
     "model_save_path": "bde_model.pt",

@@ -35,7 +35,9 @@
 # 未來開發階段 (Future Development Phases)
 
 ## Phase 1: 基礎建設與立即改善 (Foundational Improvements)
-- [x] **程式碼重構與清理**: 移除重複的 `evaluate` 函數。
+- [x] **程式碼重構與清理**:
+    - [x] 移除重複的 `evaluate` 函數。
+    - [x] 將 `mol_to_graph` 轉換邏輯重構為共用函數。
 - [x] **腳本優化**:
     - [x] 優化 `create_training_template.py` 引入命令行參數。
     - [x] 優化 `predict.py` 簡化模型加載邏輯並提供多種輸出格式選項。
@@ -46,7 +48,7 @@
 
 ## Phase 2: 擴展性與穩健性 (Scalability & Robustness)
 - [ ] **數據處理與擴充**:
-    - [x] 支援超大型數據集：考慮將 `BDEDataset` 從 `InMemoryDataset` 轉換為標準的 PyG `Dataset`。
+    - [ ] 支援超大型數據集：考慮將 `BDEDataset` 從 `InMemoryDataset` 轉換為標準的 PyG `Dataset`。
 - [ ] **實驗管理與 ML Ops**:
     - [ ] 集成實驗追蹤平台（如 MLflow, TensorBoard, 或 W&B）。
     - [ ] 實施模型版本管理。

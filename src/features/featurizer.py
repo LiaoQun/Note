@@ -1,10 +1,12 @@
 import json
 import os
 from collections import defaultdict
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Tuple, Optional
 
+import torch
 from rdkit import Chem
 from rdkit.Chem.rdchem import Atom, Bond
+from torch_geometric.data import Data
 
 
 def get_ring_size(mol_obj: Union[Atom, Bond], max_size: int = 6) -> int:
@@ -165,3 +167,84 @@ class Tokenizer:
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=4)
+
+
+def mol_to_graph(
+    mol: Chem.Mol,
+    tokenizer: Tokenizer,
+    canonical_smiles: str,
+    bde_labels_dict: Optional[Dict[Tuple[int, int], float]] = None
+) -> Optional[Data]:
+    """
+    Converts a single RDKit Mol object into a PyG Data object for training or inference.
+
+    This function is the single source of truth for featurization. It handles:
+    - Atom and bond tokenization.
+    - Calculation of 'is_valid' flag based on tokenizer vocabulary.
+    - Optional inclusion of BDE labels for training.
+    - Creation of a mapping from graph edges back to original RDKit bond indices for inference.
+
+    Args:
+        mol (Chem.Mol): The input RDKit molecule, with hydrogens added.
+        tokenizer (Tokenizer): The tokenizer instance loaded from the training vocabulary.
+        canonical_smiles (str): The canonical SMILES string of the molecule.
+        bde_labels_dict (Optional[Dict[Tuple[int, int], float]]): If provided, BDE labels
+            are included in the 'y' attribute and a 'mask' is created for loss calculation.
+            This is used during training/dataset creation. If None, 'y' and 'mask' are omitted.
+
+    Returns:
+        Data: A PyG Data object.
+        None: If the molecule has no bonds (e.g., single atom SMILES).
+    """
+    # 1. Atom Features and Validity
+    atom_feature_strings = [atom_featurizer(mol_atom) for mol_atom in mol.GetAtoms()]
+    x = torch.LongTensor([tokenizer.tokenize_atom(s) for s in atom_feature_strings])
+    atoms_are_valid = (x != 1).all().item()
+
+    # 2. Edge Features, BDE Labels, and Validity
+    is_training = bde_labels_dict is not None
+    edge_indices, edge_attrs, bond_indices_map = [], [], []
+    edge_bde_labels, edge_masks = [], []
+
+    for bond in mol.GetBonds():
+        u, v = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+        
+        # Add forward and backward edges
+        for (start_atom, end_atom, is_flipped) in [(u, v, False), (v, u, True)]:
+            edge_indices.append((start_atom, end_atom))
+            edge_attrs.append(tokenizer.tokenize_bond(bond_featurizer(bond, flipped=is_flipped)))
+            bond_indices_map.append(bond.GetIdx())
+            
+            if is_training:
+                canonical_bond_key = tuple(sorted((u, v)))
+                bde_label = bde_labels_dict.get(canonical_bond_key)
+                
+                if bde_label is not None:
+                    edge_bde_labels.append(bde_label)
+                    edge_masks.append(True)
+                else:
+                    edge_bde_labels.append(0.0)
+                    edge_masks.append(False)
+
+    if not edge_indices:
+        return None
+
+    edge_index = torch.LongTensor(edge_indices).t().contiguous()
+    edge_attr = torch.LongTensor(edge_attrs)
+    bonds_are_valid = (edge_attr != 1).all().item()
+    
+    # 3. Create Data Object
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+    
+    # Attach training-specific attributes if available
+    if is_training:
+        data.y = torch.FloatTensor(edge_bde_labels)
+        data.mask = torch.BoolTensor(edge_masks)
+        
+    # Attach inference-specific and common attributes
+    data.bond_indices_map = torch.LongTensor(bond_indices_map)
+    data.original_input_smiles = canonical_smiles
+    data.is_valid = torch.tensor(atoms_are_valid and bonds_are_valid, dtype=torch.bool)
+    
+    return data
+

@@ -11,62 +11,8 @@ from rdkit import Chem
 from torch_geometric.data import Data, Batch
 
 from src.data_preparation.template_generator import generate_fragment_template
-from src.features.featurizer import Tokenizer, atom_featurizer, bond_featurizer
+from src.features.featurizer import Tokenizer, mol_to_graph
 from src.models.mpnn import BDEModel
-
-
-def _featurize_mol_for_inference(mol: Chem.Mol, tokenizer: Tokenizer, canonical_smiles: str) -> Data:
-    """
-    Converts a single RDKit Mol object into a PyG Data object for inference.
-    Crucially, it creates a mapping from PyG's internal edge order back to RDKit's original bond indices.
-    
-    Args:
-        mol (Chem.Mol): The input RDKit molecule, with hydrogens added.
-        tokenizer (Tokenizer): The tokenizer instance loaded from the training vocabulary.
-        canonical_smiles (str): The canonical SMILES string of the molecule.
-
-    Returns:
-        Data: A PyG Data object ready for the model.
-    """
-    # Atom features
-    atom_feature_strings = [atom_featurizer(atom) for atom in mol.GetAtoms()]
-    x = torch.LongTensor([tokenizer.tokenize_atom(s) for s in atom_feature_strings])
-
-    # Edge features
-    edge_indices = []
-    edge_attrs = []
-    # bond_indices_map is essential for mapping model predictions back to original RDKit bonds.
-    # It stores the RDKit bond index for each directed edge in the order they are added.
-    bond_indices_map = [] # To map model output back to original bond indices
-
-    for bond in mol.GetBonds():
-        u, v = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-        
-        # Forward edge (u -> v)
-        edge_indices.append((u, v))
-        edge_attrs.append(tokenizer.tokenize_bond(bond_featurizer(bond, flipped=False)))
-        # Map this directed edge back to the original RDKit bond index
-        bond_indices_map.append(bond.GetIdx())
-        
-        # Backward edge (v -> u)
-        edge_indices.append((v, u))
-        edge_attrs.append(tokenizer.tokenize_bond(bond_featurizer(bond, flipped=True)))
-        # Map this directed edge back to the same original RDKit bond index
-        bond_indices_map.append(bond.GetIdx())
-
-    if not edge_indices:
-        # Handle cases where molecule has no bonds (e.g., single atom)
-        edge_index = torch.empty((2, 0), dtype=torch.long)
-        edge_attr = torch.empty((0,), dtype=torch.long)
-    else:
-        edge_index = torch.LongTensor(edge_indices).t().contiguous()
-        edge_attr = torch.LongTensor(edge_attrs)
-
-    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
-    data.bond_indices_map = torch.LongTensor(bond_indices_map) # Store the mapping in the Data object
-    data.original_input_smiles = canonical_smiles # Store canonical smiles for mapping back
-    
-    return data
 
 
 class Predictor:
@@ -95,7 +41,9 @@ class Predictor:
             num_bond_classes=self.tokenizer.bond_num_classes + 1,
         ).to(self.device)
         
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        # The warning for weights_only=False is a security feature.
+        # It's safe to set weights_only=True here as we are only loading model parameters.
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
         self.model.eval()
         print("Model and tokenizer loaded successfully.")
 
@@ -126,7 +74,8 @@ class Predictor:
             mol = Chem.MolFromSmiles(canonical_smiles)
             mol = Chem.AddHs(mol)
             
-            data = _featurize_mol_for_inference(mol, self.tokenizer, canonical_smiles)
+            # Use the shared graph converter
+            data = mol_to_graph(mol, self.tokenizer, canonical_smiles)
             
             all_data_list.append(data)
             all_fragments_df_list.append(fragment_df)
@@ -159,12 +108,14 @@ class Predictor:
             graph_preds_df = pd.DataFrame({
                 'molecule': data.original_input_smiles,
                 'bond_index': graph_bond_indices,
-                'bde_pred': graph_preds.cpu().numpy()
+                'bde_pred': graph_preds.cpu().numpy(),
+                'is_valid': data.is_valid.item() # Add the is_valid flag for the molecule
             })
             
             # Group by molecule and bond_index to average predictions for the two directed edges
             # (forward and backward) that correspond to a single original RDKit bond.
-            bde_preds_by_bond = graph_preds_df.groupby(['molecule', 'bond_index'])['bde_pred'].mean().reset_index()
+            # The 'is_valid' flag will be the same for all bonds of a molecule, so mean() is fine.
+            bde_preds_by_bond = graph_preds_df.groupby(['molecule', 'bond_index'])[['bde_pred', 'is_valid']].mean().reset_index()
             preds_records.append(bde_preds_by_bond)
             
             start_edge_idx = end_edge_idx
