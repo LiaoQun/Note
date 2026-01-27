@@ -123,7 +123,7 @@ def _fragment_iterator(input_molecule: Molecule, skip_warnings: bool = False) ->
             fragmented_smiles = Chem.MolToSmiles(rw_mol, isomericSmiles=True)
             
             # Split fragments and canonicalize by sorting
-            frags_smiles_list = sorted(fragmented_smiles.split("."))
+            frags_smiles_list = sorted(fragmented_smiles.split("."), key=len,reverse=True)
             if len(frags_smiles_list) != 2:
                 logging.warning(f"Fragmentation of {input_molecule.smiles} bond {bond.GetIdx()} did not yield 2 fragments. Got: {frags_smiles_list}")
                 continue
