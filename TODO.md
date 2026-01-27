@@ -6,6 +6,8 @@
     - 轉換 `BDEDataset` 為標準 PyG `Dataset`，以支持處理超出記憶體容量的數據集。
     - 在實現的同時，**必須** 配合 `DataLoader` 的 `num_workers` 參數進行優化，以隱藏磁碟 I/O 延遲，確保高效數據加載。
 - [ ] **數據增強 (Data Augmentation)**: 導入如 SMILES 隨機化等策略，以提升模型的泛化能力。
+- [ ] 參考alfabet優化整體架構，並且從Note專案中獨立出來
+- [ ] generate_template optimize: frags_smiles_list = sorted(fragmented_smiles.split("."), key=len,reverse=True)
 
 ## 實驗管理與 ML Ops (Experiment Management & ML Ops)
 - [x] **儲存完整的預測結果**: 在評估階段，應將訓練、驗證、測試集的完整預測結果（包含原始 SMILES 和碎片資訊）儲存下來。
@@ -16,6 +18,7 @@
 
 ## 模型與特徵工程 (Model & Featurization)
 - [ ] **模塊化 Featurizer**: 將特徵提取器抽象化，使其可通過配置文件輕鬆替換或組合。
+    - [ ] ** Ref: https://github.com/chemprop/chemprop/blob/main/chemprop/featurizers/atom.py**
 - [ ] **支持多種 GNN 骨幹**: 透過配置，允許動態選擇除 MPNN 之外的其他 GNN 模型架構。
 
 ## 性能優化 (Performance Optimization)
