@@ -109,23 +109,45 @@ class BDEInteractionLayer(MessagePassing):
 class BDEModel(nn.Module):
     """
     The complete BDE Prediction Graph Neural Network model.
+    Supports both discrete inputs (via Embeddings) and continuous inputs (via Linear projection).
     """
-    def __init__(self, num_atom_classes: int, num_bond_classes: int, atom_features: int = 128, num_messages: int = 6):
+    def __init__(self, 
+                 atom_input_dim: int, 
+                 bond_input_dim: int, 
+                 atom_features: int = 128, 
+                 num_messages: int = 6,
+                 inputs_are_discrete: bool = True):
+        """
+        Args:
+            atom_input_dim (int): Number of atom classes (if discrete) OR dimension of atom vector (if continuous).
+            bond_input_dim (int): Number of bond classes (if discrete) OR dimension of bond vector (if continuous).
+            atom_features (int): Hidden dimension size for the model.
+            num_messages (int): Number of message passing layers.
+            inputs_are_discrete (bool): If True, uses Embeddings. If False, uses Linear projection.
+        """
         super().__init__()
+        self.inputs_are_discrete = inputs_are_discrete
 
-        # Embeddings for initial atom and bond states
-        self.atom_embedding = nn.Embedding(num_atom_classes, atom_features)
-        self.bond_embedding = nn.Embedding(num_bond_classes, atom_features)
+        # 1. Initialize Encoders based on input type
+        if self.inputs_are_discrete:
+            # TokenFeaturizer logic: Integer IDs -> Embedding
+            self.atom_encoder = nn.Embedding(atom_input_dim, atom_features)
+            self.bond_encoder = nn.Embedding(bond_input_dim, atom_features)
+            # Per-bond-type bias (lookup table)
+            self.bond_bias_encoder = nn.Embedding(bond_input_dim, 1)
+        else:
+            # ChemProp/Continuous logic: Float Vector -> Linear Projection
+            self.atom_encoder = nn.Linear(atom_input_dim, atom_features)
+            self.bond_encoder = nn.Linear(bond_input_dim, atom_features)
+            # Bias computed from bond features
+            self.bond_bias_encoder = nn.Linear(bond_input_dim, 1)
 
-        # Per-bond-type bias embedding, as per the original implementation
-        self.bond_mean_embedding = nn.Embedding(num_bond_classes, 1)
-
-        # Stack of interaction layers
+        # 2. Stack of interaction layers
         self.interaction_layers = nn.ModuleList(
             [BDEInteractionLayer(atom_features) for _ in range(num_messages)]
         )
 
-        # Final MLP to predict BDE value from bond state
+        # 3. Final MLP to predict BDE value from bond state
         self.output_mlp = nn.Linear(atom_features, 1)
 
     def forward(self, data: Union[Data, Batch]) -> torch.Tensor:
@@ -133,23 +155,29 @@ class BDEModel(nn.Module):
         Forward pass for the entire model.
 
         Args:
-            data (Union[Data, Batch]): A PyG Data or Batch object containing atom IDs (`x`),
-                                       bond IDs (`edge_attr`), and `edge_index`.
+            data (Union[Data, Batch]): PyG Data object.
+                                       - x: Atom inputs.
+                                       - edge_attr: Bond inputs.
 
         Returns:
-            torch.Tensor: A 1D tensor of shape [num_edges] with the predicted BDE for each bond.
+            torch.Tensor: Predicted BDEs [num_edges].
         """
-        # 1. Initialize atom and bond states from embeddings
-        # data.x are the atom IDs, data.edge_attr are the bond IDs
-        atom_state = self.atom_embedding(data.x)  # [num_atoms, atom_features]
-        bond_state = self.bond_embedding(data.edge_attr) # [num_edges, atom_features]
-        
-        # Also get the bond_mean bias for later
-        bond_mean = self.bond_mean_embedding(data.edge_attr) # [num_edges, 1]
+        # 1. Encode Inputs
+        if self.inputs_are_discrete:
+            # Expecting LongTensor indices
+            atom_state = self.atom_encoder(data.x)  
+            bond_state = self.bond_encoder(data.edge_attr)
+            bond_mean = self.bond_bias_encoder(data.edge_attr)
+        else:
+            # Expecting FloatTensor vectors
+            # Ensure types are correct if mixed precision is ever used, but mostly fine.
+            atom_state = self.atom_encoder(data.x)
+            bond_state = self.bond_encoder(data.edge_attr)
+            bond_mean = self.bond_bias_encoder(data.edge_attr)
 
         # 2. Run through message passing layers
         for layer in self.interaction_layers:
-            atom_state, bond_state = layer(atom_state, data.edge_index, bond_state) # atom_state: [num_atoms, atom_features], bond_state: [num_edges, atom_features]
+            atom_state, bond_state = layer(atom_state, data.edge_index, bond_state)
 
         # 3. Predict BDE from final bond state
         bde_pred = self.output_mlp(bond_state) # [num_edges, 1]

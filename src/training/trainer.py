@@ -8,7 +8,7 @@ from typing import Dict, List
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.metrics import r2_score, mean_squared_error
 
-from src.config import TrainConfig
+from src.config import TrainConfig, ModelConfig
 from src.utils.reporting import save_training_log
 from src.utils.plotting import plot_training_curve, plot_parity
 from src.inference.predictor import Predictor
@@ -18,8 +18,8 @@ class Trainer:
     Handles the model training, validation, and evaluation pipeline.
     """
     def __init__(self, model, optimizer, train_loader, val_loader, test_loader, 
-                 device, cfg: TrainConfig, run_dir: str, full_dataset_df: pd.DataFrame, 
-                 data_splits: Dict[str, List], vocab_path: str):
+                 device, cfg: TrainConfig, model_cfg: ModelConfig, run_dir: str, full_dataset_df: pd.DataFrame, 
+                 data_splits: Dict[str, List], vocab_path: str, featurizer_type: str = 'TokenFeaturizer'):
         self.model = model
         self.optimizer = optimizer
         self.train_loader = train_loader
@@ -27,9 +27,11 @@ class Trainer:
         self.test_loader = test_loader
         self.device = device
         self.cfg = cfg
+        self.model_cfg = model_cfg
         self.run_dir = run_dir
         self.model_save_path = os.path.join(run_dir, cfg.model_save_path)
         self.vocab_path = vocab_path
+        self.featurizer_type = featurizer_type
         self.full_dataset_df = full_dataset_df
         self.data_splits = data_splits
 
@@ -117,6 +119,9 @@ class Trainer:
             predictor = Predictor(
                 model_path=self.model_save_path,
                 vocab_path=self.vocab_path,
+                featurizer_type=self.featurizer_type,
+                atom_features=self.model_cfg.atom_features, 
+                num_messages=self.model_cfg.num_messages,   
                 device=self.device
             )
         except FileNotFoundError as e:

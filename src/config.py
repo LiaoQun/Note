@@ -14,6 +14,7 @@ class DataConfig:
     val_size: float = 0.1 # Percentage of the original data, not the training set
     random_seed: int = 42
     sample_percentage: float = 1.0
+    featurizer_type: str = 'TokenFeaturizer'  # Options: 'TokenFeaturizer', 'ChemPropFeaturizer'
 
 @dataclass
 class ModelConfig:

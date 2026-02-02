@@ -1,6 +1,4 @@
-"""
-Main script for training and evaluating the BDE Prediction Model.
-"""
+"Main script for training and evaluating the BDE Prediction Model."
 import os
 import shutil
 import argparse
@@ -15,7 +13,7 @@ from typing import List, Tuple, Dict
 from sklearn.model_selection import train_test_split
 
 from src.config import MainConfig
-from src.features.featurizer import Tokenizer
+from src.features import get_featurizer
 from src.data.dataset import BDEDataset
 from src.models.mpnn import BDEModel
 from src.training.trainer import Trainer
@@ -166,30 +164,35 @@ def run_training(cfg: MainConfig, config_path: str):
 
     print(f"Training set: {len(train_data)} | Validation set: {len(val_data)} | Test set: {len(test_data)}")
 
-    # 3. Initialize Tokenizer, Datasets, and DataLoaders
-    print("Initializing tokenizer...")
-    if cfg.data.vocab_path and os.path.exists(cfg.data.vocab_path):
-        print(f"Loading tokenizer from predefined vocabulary: {cfg.data.vocab_path}")
-        tokenizer = Tokenizer(vocab_filepath=cfg.data.vocab_path)
-        effective_vocab_path = cfg.data.vocab_path
-    else:
-        print("No valid vocabulary path provided. Building tokenizer from training data...")
-        # Extract SMILES from the training set to build the vocab
+    # 3. Initialize Featurizer, Datasets, and DataLoaders
+    print(f"Initializing featurizer: {cfg.data.featurizer_type}...")
+    
+    # Use the factory to get the featurizer based on config
+    # Note: If vocab_path is in config, featurizer might load it. 
+    # But for new training, we usually want to build it from scratch if it's a TokenFeaturizer.
+    featurizer = get_featurizer(cfg.data)
+
+    # Check if we should build vocabulary (only for TokenFeaturizer usually)
+    # If vocab_path exists and is valid, the factory might have loaded it.
+    # If not, we should build it from training data.
+    # BaseFeaturizer has 'prepare_data' hook.
+    if hasattr(featurizer, 'prepare_data'):
+        print("Preparing featurizer (e.g., building vocabulary)...")
         train_smiles = [data[0] for data in train_data]
+        featurizer.prepare_data(train_smiles)
         
-        tokenizer = Tokenizer()
-        tokenizer.build_from_smiles(train_smiles)
-        
-        # Save the newly created vocab to the run-specific directory
-        vocab_save_path = os.path.join(run_dir, "vocab.json")
-        tokenizer.save(vocab_save_path)
-        print(f"New vocabulary saved to: {vocab_save_path}")
-        effective_vocab_path = vocab_save_path
+    # Save the featurizer state (e.g., vocab.json) to the run directory
+    # For TokenFeaturizer, this is critical. For ChemProp, it might be a no-op.
+    # We maintain the legacy 'vocab.json' filename for now if applicable, but better to pass run_dir.
+    vocab_save_path = os.path.join(run_dir, "vocab.json")
+    featurizer.save(vocab_save_path)
+    print(f"Featurizer state saved to: {vocab_save_path}")
+    effective_vocab_path = vocab_save_path
 
     print("Initializing datasets...")
-    train_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'train'), smiles_data=train_data, tokenizer=tokenizer)
-    val_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'val'), smiles_data=val_data, tokenizer=tokenizer)
-    test_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'test'), smiles_data=test_data, tokenizer=tokenizer)
+    train_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'train'), smiles_data=train_data, featurizer=featurizer)
+    val_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'val'), smiles_data=val_data, featurizer=featurizer)
+    test_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'test'), smiles_data=test_data, featurizer=featurizer)
     
     train_loader = DataLoader(train_dataset, batch_size=cfg.train.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=cfg.train.batch_size, shuffle=False)
@@ -198,10 +201,11 @@ def run_training(cfg: MainConfig, config_path: str):
     # 4. Initialize Model and Optimizer
     print("Initializing model...")
     model = BDEModel(
-        num_atom_classes=tokenizer.atom_num_classes + 1,
-        num_bond_classes=tokenizer.bond_num_classes + 1,
+        atom_input_dim=featurizer.atom_dim,
+        bond_input_dim=featurizer.bond_dim,
         atom_features=cfg.model.atom_features,
-        num_messages=cfg.model.num_messages
+        num_messages=cfg.model.num_messages,
+        inputs_are_discrete=featurizer.is_discrete
     ).to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
@@ -215,11 +219,13 @@ def run_training(cfg: MainConfig, config_path: str):
         test_loader=test_loader,
         device=device,
         cfg=cfg.train,
+        model_cfg=cfg.model,
         run_dir=run_dir,
         # Pass additional data for final evaluation and saving
         full_dataset_df=df,
         data_splits={'train': train_data, 'val': val_data, 'test': test_data},
-        vocab_path=effective_vocab_path
+        vocab_path=effective_vocab_path, # Used by Predictor
+        featurizer_type=cfg.data.featurizer_type
     )
     
     trainer.train()
