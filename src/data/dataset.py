@@ -1,12 +1,11 @@
 import os
-import json
-from typing import Dict, List, Tuple, Union, Optional # Keep Optional for mol_to_graph parameters
+from typing import Dict, List, Tuple
 
 import torch
-from torch_geometric.data import InMemoryDataset, Data
+from torch_geometric.data import InMemoryDataset
 from rdkit import Chem
 
-from src.features.featurizer import Tokenizer, mol_to_graph # Import Tokenizer and the unified mol_to_graph
+from src.features.base import BaseFeaturizer
 
 
 class BDEDataset(InMemoryDataset):
@@ -15,25 +14,21 @@ class BDEDataset(InMemoryDataset):
     Processes SMILES strings into PyG Data objects with atom and bond features,
     BDE labels, and a loss mask. All data is loaded into memory for faster training epochs.
     """
-    def __init__(self, root: str, smiles_data: List[Tuple[str, Dict[Tuple[int, int], float]]], tokenizer: Tokenizer, transform=None, pre_transform=None):
+    def __init__(self, root: str, smiles_data: List[Tuple[str, Dict[Tuple[int, int], float]]], 
+                 featurizer: BaseFeaturizer, transform=None, pre_transform=None):
         """
         Args:
             root (str): Root directory where the dataset will be saved.
             smiles_data (List[Tuple[str, Dict[Tuple[int, int], float]]]): A list of tuples,
                                                                           each containing a SMILES string
                                                                           and a dictionary of BDE labels.
-            tokenizer (Tokenizer): An initialized Tokenizer instance from src.features.featurizer.
+            featurizer (BaseFeaturizer): An initialized Featurizer instance.
         """
         self.smiles_data = smiles_data
-        self.tokenizer = tokenizer
+        self.featurizer = featurizer
         super().__init__(root, transform, pre_transform)
-        # The following `torch.load` call triggers a security warning because `weights_only` defaults to `False`.
-        # This is REQUIRED for InMemoryDataset as we are loading a complex tuple `(data, slices)`
-        # which contains non-tensor objects (like the PyG Data object itself).
-        # We acknowledge this and accept the risk as we trust the source of our processed data files.
-        # For a production system with untrusted data, this would require a more robust solution
-        # such as using `torch.serialization.add_safe_globals` to whitelist the necessary classes.
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        # The following `torch.load` is safe because we trust the source of our processed data files.
+        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
 
     @property
     def raw_file_names(self) -> List[str]:
@@ -61,7 +56,8 @@ class BDEDataset(InMemoryDataset):
                     continue
                 mol = Chem.AddHs(mol)
                 
-                data = mol_to_graph(mol, self.tokenizer, smiles, bde_labels_dict=bde_labels_dict)
+                # Use the abstract featurizer
+                data = self.featurizer.featurize(mol, labels=bde_labels_dict, smiles=smiles)
 
                 if data is not None:
                     data_list.append(data)

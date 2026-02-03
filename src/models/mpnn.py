@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from torch_geometric.nn import MessagePassing
 from torch_geometric.data import Data, Batch
-from typing import Tuple, Union
+from typing import Tuple, Union, Dict
 
 class BDEInteractionLayer(MessagePassing):
     """
@@ -109,18 +109,27 @@ class BDEInteractionLayer(MessagePassing):
 class BDEModel(nn.Module):
     """
     The complete BDE Prediction Graph Neural Network model.
+    Supports both discrete inputs (via Embeddings) and continuous inputs (via Linear projection).
     """
-    def __init__(self, num_atom_classes: int, num_bond_classes: int, atom_features: int = 128, num_messages: int = 6):
+    def __init__(self, 
+                 atom_input_dim: int, 
+                 bond_input_dim: int, 
+                 atom_features: int = 128, 
+                 num_messages: int = 6,
+                 inputs_are_discrete: bool = True):
         super().__init__()
+        self.inputs_are_discrete = inputs_are_discrete
+        self.num_messages = num_messages
 
-        # Embeddings for initial atom and bond states
-        self.atom_embedding = nn.Embedding(num_atom_classes, atom_features)
-        self.bond_embedding = nn.Embedding(num_bond_classes, atom_features)
+        if self.inputs_are_discrete:
+            self.atom_encoder = nn.Embedding(atom_input_dim, atom_features)
+            self.bond_encoder = nn.Embedding(bond_input_dim, atom_features)
+            self.bond_bias_encoder = nn.Embedding(bond_input_dim, 1)
+        else:
+            self.atom_encoder = nn.Linear(atom_input_dim, atom_features)
+            self.bond_encoder = nn.Linear(bond_input_dim, atom_features)
+            self.bond_bias_encoder = nn.Linear(bond_input_dim, 1)
 
-        # Per-bond-type bias embedding, as per the original implementation
-        self.bond_mean_embedding = nn.Embedding(num_bond_classes, 1)
-
-        # Stack of interaction layers
         self.interaction_layers = nn.ModuleList(
             [BDEInteractionLayer(atom_features) for _ in range(num_messages)]
         )
@@ -128,33 +137,39 @@ class BDEModel(nn.Module):
         # Final MLP to predict BDE value from bond state
         self.output_mlp = nn.Linear(atom_features, 1)
 
-    def forward(self, data: Union[Data, Batch]) -> torch.Tensor:
+    def forward(self, data: Union[Data, Batch], return_intermediate: bool = False) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Forward pass for the entire model.
-
-        Args:
-            data (Union[Data, Batch]): A PyG Data or Batch object containing atom IDs (`x`),
-                                       bond IDs (`edge_attr`), and `edge_index`.
-
-        Returns:
-            torch.Tensor: A 1D tensor of shape [num_edges] with the predicted BDE for each bond.
         """
         # 1. Initialize atom and bond states from embeddings
         # data.x are the atom IDs, data.edge_attr are the bond IDs
-        atom_state = self.atom_embedding(data.x)  # [num_atoms, atom_features]
-        bond_state = self.bond_embedding(data.edge_attr) # [num_edges, atom_features]
-        
-        # Also get the bond_mean bias for later
-        bond_mean = self.bond_mean_embedding(data.edge_attr) # [num_edges, 1]
+        if self.inputs_are_discrete:
+            atom_state = self.atom_encoder(data.x)  
+            bond_state = self.bond_encoder(data.edge_attr)
+            bond_mean = self.bond_bias_encoder(data.edge_attr)
+        else:
+            atom_state = self.atom_encoder(data.x)
+            bond_state = self.bond_encoder(data.edge_attr)
+            bond_mean = self.bond_bias_encoder(data.edge_attr)
 
+        intermediate_embeddings = {}
+        layers_to_capture = {1, 3, 6}
         # 2. Run through message passing layers
-        for layer in self.interaction_layers:
-            atom_state, bond_state = layer(atom_state, data.edge_index, bond_state) # atom_state: [num_atoms, atom_features], bond_state: [num_edges, atom_features]
+        for i, layer in enumerate(self.interaction_layers):
+            atom_state, bond_state = layer(atom_state, data.edge_index, bond_state)
+            if (i + 1) in layers_to_capture:
+                intermediate_embeddings[f'layer_{i+1}'] = bond_state
 
+        if self.num_messages not in layers_to_capture and self.num_messages > 0:
+             intermediate_embeddings[f'layer_{self.num_messages}'] = bond_state
+       
         # 3. Predict BDE from final bond state
         bde_pred = self.output_mlp(bond_state) # [num_edges, 1]
         
         # 4. Add the per-bond-type bias
         bde_pred = bde_pred + bond_mean # [num_edges, 1]
 
-        return bde_pred.squeeze(-1) # [num_edges]
+        if return_intermediate:
+            return intermediate_embeddings
+        else:
+            return bde_pred.squeeze(-1) # [num_edges]
