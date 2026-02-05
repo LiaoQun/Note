@@ -2,7 +2,7 @@
 This module contains the Predictor class for running inference with a trained BDE model.
 """
 import os
-from typing import List, Dict, Union, Optional
+from typing import List, Dict, Union, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -173,6 +173,136 @@ class Predictor:
             result_df = result_df.reset_index(drop=True)
 
         return result_df.reset_index(drop=True)
+
+
+def get_bde_predictions_with_embeddings(
+    smiles: Union[str, List[str]],
+    model_path: str,
+    vocab_path: str,
+    featurizer_type: str = 'TokenFeaturizer',
+    num_messages: int = 6,
+    device: str = 'cpu'
+) -> Tuple[pd.DataFrame, Dict[int, pd.DataFrame]]:
+    """
+    Gets BDE predictions and extracts intermediate, averaged bond embeddings from each MPNN layer.
+
+    Args:
+        smiles (Union[str, List[str]]): A single SMILES string or a list of SMILES strings.
+        model_path (str): Path to the trained model checkpoint (.pt file).
+        vocab_path (str): Path to the vocabulary file (.json) used during training.
+        featurizer_type (str): Type of featurizer to use.
+        num_messages (int): Number of message passing layers used in the model.
+        device (str, optional): The device to run inference on.
+
+    Returns:
+        Tuple[pd.DataFrame, Dict[int, pd.DataFrame]]:
+            - A DataFrame containing final predictions and fragment info.
+            - A dictionary where keys are layer indices and values are DataFrames
+              containing ('molecule', 'bond_index', 'embedding') for that layer,
+              averaged over directed edges.
+    """
+    if isinstance(smiles, str):
+        smiles_list = [smiles]
+    else:
+        smiles_list = smiles
+
+    try:
+        predictor = Predictor(
+            model_path=model_path,
+            vocab_path=vocab_path,
+            featurizer_type=featurizer_type,
+            num_messages=num_messages,
+            device=device
+        )
+        
+        all_fragments_df = generate_fragment_template(smiles_list)
+        if all_fragments_df.empty:
+            return pd.DataFrame(), {}
+            
+        canonical_smiles_processed = all_fragments_df['molecule'].unique().tolist()
+        all_data_list = []
+        for canonical_smiles in canonical_smiles_processed:
+            mol = Chem.MolFromSmiles(canonical_smiles)
+            mol = Chem.AddHs(mol)
+            data = predictor.featurizer.featurize(mol, smiles=canonical_smiles)
+            if data:
+                data.original_input_smiles = canonical_smiles
+                all_data_list.append(data)
+
+        if not all_data_list:
+            return pd.DataFrame(), {}
+            
+        batch = Batch.from_data_list(all_data_list).to(predictor.device)
+
+        bond_embeddings_by_layer = {}
+        hooks = []
+
+        def get_bond_embeddings_hook(layer_idx):
+            def hook(module, input, output):
+                bond_embeddings_by_layer[layer_idx] = output[1].detach().cpu()
+            return hook
+
+        for i, layer in enumerate(predictor.model.interaction_layers):
+            hooks.append(layer.register_forward_hook(get_bond_embeddings_hook(i)))
+
+        with torch.no_grad():
+            final_predictions = predictor.model(batch)
+
+        for hook in hooks:
+            hook.remove()
+
+        # --- Process Final Predictions and Embeddings ---
+        
+        # Process final BDE predictions
+        final_bde_preds_list = []
+        start_edge_idx = 0
+        for data in all_data_list:
+            num_edges = data.edge_index.size(1)
+            end_edge_idx = start_edge_idx + num_edges
+            
+            graph_preds_df = pd.DataFrame({
+                'molecule': data.original_input_smiles,
+                'bond_index': data.bond_indices_map.cpu().numpy(),
+                'bde_pred': final_predictions[start_edge_idx:end_edge_idx].cpu().numpy()
+            })
+            bde_preds_by_bond = graph_preds_df.groupby(['molecule', 'bond_index'])['bde_pred'].mean().reset_index()
+            final_bde_preds_list.append(bde_preds_by_bond)
+            
+            start_edge_idx = end_edge_idx
+
+        final_bde_preds_df = pd.concat(final_bde_preds_list, ignore_index=True) if final_bde_preds_list else pd.DataFrame()
+        results_df = pd.merge(all_fragments_df, final_bde_preds_df, on=['molecule', 'bond_index'], how='left')
+
+        # Process intermediate layer embeddings
+        processed_embeddings = {}
+        for layer_idx, embeddings_tensor in bond_embeddings_by_layer.items():
+            layer_embeds_list = []
+            start_edge_idx = 0
+            for data in all_data_list:
+                num_edges = data.edge_index.size(1)
+                end_edge_idx = start_edge_idx + num_edges
+                
+                graph_embeds_df = pd.DataFrame({
+                    'molecule': data.original_input_smiles,
+                    'bond_index': data.bond_indices_map.cpu().numpy(),
+                    'embedding': list(embeddings_tensor[start_edge_idx:end_edge_idx].numpy())
+                })
+
+                # Average embeddings for each bond
+                avg_embeds = graph_embeds_df.groupby(['molecule', 'bond_index'])['embedding'].apply(lambda x: np.mean(np.stack(x), axis=0)).reset_index()
+                layer_embeds_list.append(avg_embeds)
+                
+                start_edge_idx = end_edge_idx
+            
+            processed_embeddings[layer_idx] = pd.concat(layer_embeds_list, ignore_index=True) if layer_embeds_list else pd.DataFrame()
+
+        return results_df, processed_embeddings
+
+    except Exception as e:
+        print(f"An error occurred during prediction: {e}")
+        return pd.DataFrame(), {}
+
+
 
 
 def get_bde_predictions(
