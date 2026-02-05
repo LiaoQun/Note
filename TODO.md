@@ -17,8 +17,8 @@
 - [ ] **實施模型版本管理**: 建立更完善的模型版本控制機制，確保訓練過程的可追溯性。
 
 ## 模型與特徵工程 (Model & Featurization)
-- [ ] **模塊化 Featurizer**: 將特徵提取器抽象化，使其可通過配置文件輕鬆替換或組合。
-    - [ ] **Ref:** https://github.com/chemprop/chemprop/blob/main/chemprop/featurizers/atom.py
+- [X] **模塊化 Featurizer**: 將特徵提取器抽象化，使其可通過配置文件輕鬆替換或組合。
+    - [X] **Ref:** https://github.com/chemprop/chemprop/blob/main/chemprop/featurizers/atom.py
 - [ ] **支持多種 GNN 骨幹**: 透過配置，允許動態選擇除 MPNN 之外的其他 GNN 模型架構。
 
 ## 性能優化 (Performance Optimization)
@@ -39,6 +39,6 @@
 - [x] **重構 `mol_to_graph` 轉換邏輯**: 將 `src/data/dataset.py` 和 `src/inference/predictor.py` 中重複的分子到圖轉換邏輯，提取到 `src/features/featurizer.py` 中的共用函數 `mol_to_graph`，並讓兩邊的模塊都調用此函數，以遵循 DRY 原則。
 
 ## 測試與品質保證 (Testing & Quality Assurance)
-- [ ] **擴充單元測試覆蓋率**: 為核心的數據處理、特徵提取和模型組件編寫更全面的單元測試。
+- [X] **擴充單元測試覆蓋率**: 為核心的數據處理、特徵提取和模型組件編寫更全面的單元測試。
 - [ ] **建立整合測試**: 建立一個小型的端到端測試，自動運行一個完整的訓練和預測流程，以確保所有模塊能正確協同工作。
 - [ ] **導入靜態分析與 Linter**: 引入如 `ruff`, `mypy` 等工具，並考慮整合到 pre-commit hook 中，以自動化程式碼風格檢查和型別檢查，確保代碼品質。

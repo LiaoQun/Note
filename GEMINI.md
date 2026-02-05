@@ -51,3 +51,6 @@
 - **Language:** 繁體中文 (Traditional Chinese).
 - **Tone:** 專業、精準、具備工程思維。
 - **Focus:** 優先考慮程式碼的可維護性 (Maintainability) 與協作友善度。
+
+## Gemini Added Memories
+- 在BDE模型訓練中，永遠只用examples/test_data.csv.gz來當訓練資料，epoch在第一次驗證設定為10。因為目前只需要小規模驗證模型可以正確訓練使loss下降，使用此設定即可。

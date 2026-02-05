@@ -2,7 +2,7 @@
 This module contains the Predictor class for running inference with a trained BDE model.
 """
 import os
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Optional
 
 import numpy as np
 import pandas as pd
@@ -11,41 +11,70 @@ from rdkit import Chem
 from torch_geometric.data import Data, Batch
 
 from src.data_preparation.template_generator import generate_fragment_template
-from src.features.featurizer import Tokenizer, mol_to_graph
+from src.features import get_featurizer
+from src.config import DataConfig
 from src.models.mpnn import BDEModel
 
 
 class Predictor:
     """Handles loading a trained model and making BDE predictions."""
 
-    def __init__(self, model_path: str, vocab_path: str, device: str = 'cpu'):
+    def __init__(self, model_path: str, vocab_path: str, featurizer_type: str = 'TokenFeaturizer', 
+                 atom_features: int = 128, num_messages: int = 6, device: str = 'cpu'):
         """
         Initializes the Predictor.
 
         Args:
             model_path (str): Path to the trained model checkpoint (.pt file).
             vocab_path (str): Path to the vocabulary file (.json) used during training.
+            featurizer_type (str): Type of featurizer to use ('TokenFeaturizer' or 'ChemPropFeaturizer').
+            atom_features (int): Hidden dimension size for the model.
+            num_messages (int): Number of message passing layers.
             device (str): The device to run inference on ('cpu' or 'cuda').
         """
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model checkpoint not found at: {model_path}")
-        if not os.path.exists(vocab_path):
-            raise FileNotFoundError(f"Vocabulary file not found at: {vocab_path}")
+        
+        # Vocab path check might depend on featurizer type, but we'll check it if provided
+        if vocab_path and not os.path.exists(vocab_path) and featurizer_type == 'TokenFeaturizer':
+             raise FileNotFoundError(f"Vocabulary file not found at: {vocab_path}")
 
-        self.tokenizer = Tokenizer(vocab_filepath=vocab_path)
         self.device = torch.device(device)
+        
+        # Initialize Featurizer
+        # We construct a temporary config object to use the factory
+        data_config = DataConfig(vocab_path=vocab_path, featurizer_type=featurizer_type)
+        self.featurizer = get_featurizer(data_config)
 
-        # Re-create model architecture based on vocab size
+        # Re-create model architecture based on featurizer dimensions
         self.model = BDEModel(
-            num_atom_classes=self.tokenizer.atom_num_classes + 1,
-            num_bond_classes=self.tokenizer.bond_num_classes + 1,
+            atom_input_dim=self.featurizer.atom_dim,
+            bond_input_dim=self.featurizer.bond_dim,
+            atom_features=atom_features,
+            num_messages=num_messages,
+            inputs_are_discrete=self.featurizer.is_discrete
         ).to(self.device)
         
         # The warning for weights_only=False is a security feature.
         # It's safe to set weights_only=True here as we are only loading model parameters.
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
+        state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
+        
+        # --- Compatibility: Rename keys from old models ---
+        # Map old 'embedding' keys to new 'encoder' keys
+        key_mapping = {
+            "atom_embedding.weight": "atom_encoder.weight",
+            "bond_embedding.weight": "bond_encoder.weight",
+            "bond_mean_embedding.weight": "bond_bias_encoder.weight"
+        }
+        
+        new_state_dict = {}
+        for key, value in state_dict.items():
+            new_key = key_mapping.get(key, key)
+            new_state_dict[new_key] = value
+            
+        self.model.load_state_dict(new_state_dict)
         self.model.eval()
-        print("Model and tokenizer loaded successfully.")
+        print("Model and featurizer loaded successfully.")
 
     def predict(self, smiles_list: List[str], drop_duplicates: bool = True) -> pd.DataFrame:
         """
@@ -74,8 +103,8 @@ class Predictor:
             mol = Chem.MolFromSmiles(canonical_smiles)
             mol = Chem.AddHs(mol)
             
-            # Use the shared graph converter
-            data = mol_to_graph(mol, self.tokenizer, canonical_smiles)
+            # Use the abstract featurizer
+            data = self.featurizer.featurize(mol, smiles=canonical_smiles)
             
             all_data_list.append(data)
             all_fragments_df_list.append(fragment_df)
@@ -149,6 +178,8 @@ def get_bde_predictions(
     smiles: Union[str, List[str]],
     model_path: str,
     vocab_path: str,
+    featurizer_type: str = 'TokenFeaturizer',
+    num_messages: int = 6, # Add num_messages parameter
     drop_duplicates: bool = True,
     device: str = 'cpu'
 ) -> pd.DataFrame:
@@ -162,6 +193,8 @@ def get_bde_predictions(
         smiles (Union[str, List[str]]): A single SMILES string or a list of SMILES strings.
         model_path (str): Path to the trained model checkpoint (.pt file).
         vocab_path (str): Path to the vocabulary file (.json) used during training.
+        featurizer_type (str): Type of featurizer to use.
+        num_messages (int): Number of message passing layers used in the model.
         drop_duplicates (bool, optional): If True, remove predictions for bonds that
                                           result in the same set of fragments. Defaults to True.
         device (str, optional): The device to run inference on ('cpu' or 'cuda'). Defaults to 'cpu'.
@@ -178,6 +211,8 @@ def get_bde_predictions(
         predictor = Predictor(
             model_path=model_path,
             vocab_path=vocab_path,
+            featurizer_type=featurizer_type,
+            num_messages=num_messages, # Pass num_messages here
             device=device
         )
         results_df = predictor.predict(smiles_list, drop_duplicates=drop_duplicates)

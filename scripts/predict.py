@@ -29,6 +29,9 @@ def main():
     model_group.add_argument('--run_dir', type=str, help='Path to the training run directory (e.g., training_runs/TIMESTAMP).')
     model_group.add_argument('--model_path', type=str, help='Path to the trained model checkpoint (.pt file).')
     model_group.add_argument('--vocab_path', type=str, help='Path to the corresponding vocabulary file (.json).')
+    model_group.add_argument('--featurizer_type', type=str, default=None, 
+                             help='Type of featurizer to use (e.g., TokenFeaturizer). ' 
+                                  'If --run_dir is provided, this is inferred from config.')
 
     # --- Other Options ---
     parser.add_argument('--output_path', type=str, default='predictions.csv', help='Path to save the output CSV file.')
@@ -37,9 +40,10 @@ def main():
     
     args = parser.parse_args()
 
-    # --- Determine Model and Vocab Paths ---
+    # --- Determine Model, Vocab, and Featurizer ---
     model_path = args.model_path
     vocab_path = args.vocab_path
+    featurizer_type = args.featurizer_type or 'TokenFeaturizer' # Default
 
     if args.run_dir:
         if args.model_path or args.vocab_path:
@@ -64,12 +68,24 @@ def main():
         else:
             vocab_path = config.get('data', {}).get('vocab_path', 'etc/preprocessor.json')
             
+        # Determine featurizer type from config if not explicitly provided
+        if args.featurizer_type is None:
+            featurizer_type = config.get('data', {}).get('featurizer_type', 'TokenFeaturizer')
+
+        # Get num_messages from config
+        num_messages = config.get('model', {}).get('num_messages', 6) # Default to 6 if not in config
+
         print(f"Loading from run directory '{args.run_dir}':")
         print(f"  -> Model Path: {model_path}")
         print(f"  -> Vocab Path: {vocab_path}")
+        print(f"  -> Featurizer: {featurizer_type}")
+        print(f"  -> Num Messages: {num_messages}") # Add print for num_messages
 
     elif not (model_path and vocab_path):
-        parser.error("If not using --run_dir, both --model_path and --vocab_path are required.")
+        # Note: If featurizer doesn't use vocab (like ChemProp), vocab_path might be dummy. 
+        # But for now we enforce it for safety unless user knows what they are doing.
+        if featurizer_type == 'TokenFeaturizer':
+            parser.error("If not using --run_dir, both --model_path and --vocab_path are required for TokenFeaturizer.")
 
 
     # --- Load SMILES ---
@@ -93,6 +109,8 @@ def main():
         smiles=smiles_list,
         model_path=model_path,
         vocab_path=vocab_path,
+        featurizer_type=featurizer_type,
+        num_messages=num_messages, # Pass num_messages here
         drop_duplicates=not args.keep_duplicates,
         device=args.device
     )

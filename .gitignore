@@ -113,3 +113,6 @@ Untitled*
 
 #Runs
 training_runs/
+.gemini/
+.github/
+gha-creds-*.json
