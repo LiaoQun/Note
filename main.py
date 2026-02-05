@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 import pandas as pd
 import torch
-from torch_geometric.data import DataLoader
+from torch_geometric.loader import DataLoader
 from rdkit import Chem
 from tqdm import tqdm
 from typing import List, Tuple, Dict

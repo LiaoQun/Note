@@ -5,7 +5,7 @@
     ],
     "test_size": 0.1,
     "val_size": 0.1,
-    "sample_percentage": 0.1,
+    "sample_percentage": 0.5,
     "featurizer_type": "ChemPropFeaturizer"
   },
   "model": {
@@ -13,10 +13,10 @@
     "num_messages": 3
   },
   "train": {
-    "device": "cpu", 
-    "epochs": 2,
+    "device": "cpu",
+    "epochs": 10,
     "lr": 0.001,
-    "batch_size": 16,
+    "batch_size": 32,
     "model_save_path": "bde_model.pt",
     "output_dir": "training_runs"
   }
