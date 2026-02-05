@@ -72,10 +72,14 @@ def main():
         if args.featurizer_type is None:
             featurizer_type = config.get('data', {}).get('featurizer_type', 'TokenFeaturizer')
 
+        # Get num_messages from config
+        num_messages = config.get('model', {}).get('num_messages', 6) # Default to 6 if not in config
+
         print(f"Loading from run directory '{args.run_dir}':")
         print(f"  -> Model Path: {model_path}")
         print(f"  -> Vocab Path: {vocab_path}")
         print(f"  -> Featurizer: {featurizer_type}")
+        print(f"  -> Num Messages: {num_messages}") # Add print for num_messages
 
     elif not (model_path and vocab_path):
         # Note: If featurizer doesn't use vocab (like ChemProp), vocab_path might be dummy. 
@@ -106,6 +110,7 @@ def main():
         model_path=model_path,
         vocab_path=vocab_path,
         featurizer_type=featurizer_type,
+        num_messages=num_messages, # Pass num_messages here
         drop_duplicates=not args.keep_duplicates,
         device=args.device
     )

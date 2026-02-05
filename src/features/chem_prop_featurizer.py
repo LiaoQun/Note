@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from typing import Sequence, TypeVar, Generic, List, Dict, Any, NamedTuple
+from typing import Sequence, TypeVar, Generic, List, Dict, Any, NamedTuple, Optional, Union, Tuple
 from abc import abstractmethod
 from collections.abc import Sized
 
@@ -30,7 +30,7 @@ class VectorFeaturizer(Featurizer[S, np.ndarray], Sized):
 class GraphFeaturizer(Featurizer[S, MolGraph]):
     @property
     @abstractmethod
-    def shape(self) -> tuple[int, int]:
+    def shape(self) -> Tuple[int, int]:
         ...
 
 class EnumMapping(Enum):
@@ -81,7 +81,7 @@ class MultiHotAtomFeaturizer(VectorFeaturizer[Atom]):
     def __len__(self) -> int:
         return self.__size
 
-    def __call__(self, a: Atom | None) -> np.ndarray:
+    def __call__(self, a: Optional[Atom]) -> np.ndarray:
         x = np.zeros(self.__size)
         if a is None: return x
 
@@ -127,17 +127,21 @@ class AtomFeatureMode(EnumMapping):
     V2 = auto()
     ORGANIC = auto()
 
-def get_multi_hot_atom_featurizer(mode: str | AtomFeatureMode) -> MultiHotAtomFeaturizer:
-    match AtomFeatureMode.get(mode):
-        case AtomFeatureMode.V1: return MultiHotAtomFeaturizer.v1()
-        case AtomFeatureMode.V2: return MultiHotAtomFeaturizer.v2()
-        case AtomFeatureMode.ORGANIC: return MultiHotAtomFeaturizer.organic()
-        case _: raise RuntimeError("unreachable code reached!")
+def get_multi_hot_atom_featurizer(mode: Union[str, AtomFeatureMode]) -> MultiHotAtomFeaturizer:
+    mode_enum = AtomFeatureMode.get(mode)
+    if mode_enum == AtomFeatureMode.V1:
+        return MultiHotAtomFeaturizer.v1()
+    elif mode_enum == AtomFeatureMode.V2:
+        return MultiHotAtomFeaturizer.v2()
+    elif mode_enum == AtomFeatureMode.ORGANIC:
+        return MultiHotAtomFeaturizer.organic()
+    else:
+        raise RuntimeError("unreachable code reached!")
 
 
 class MultiHotBondFeaturizer(VectorFeaturizer[Bond]):
     def __init__(
-        self, bond_types: Sequence[BondType] | None = None, stereos: Sequence[int] | None = None
+        self, bond_types: Optional[Sequence[BondType]] = None, stereos: Optional[Sequence[int]] = None
     ):
         self.bond_types = bond_types or [BondType.SINGLE, BondType.DOUBLE, BondType.TRIPLE, BondType.AROMATIC]
         self.stereo = stereos or range(6)

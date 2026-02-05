@@ -179,6 +179,7 @@ def get_bde_predictions(
     model_path: str,
     vocab_path: str,
     featurizer_type: str = 'TokenFeaturizer',
+    num_messages: int = 6, # Add num_messages parameter
     drop_duplicates: bool = True,
     device: str = 'cpu'
 ) -> pd.DataFrame:
@@ -193,6 +194,7 @@ def get_bde_predictions(
         model_path (str): Path to the trained model checkpoint (.pt file).
         vocab_path (str): Path to the vocabulary file (.json) used during training.
         featurizer_type (str): Type of featurizer to use.
+        num_messages (int): Number of message passing layers used in the model.
         drop_duplicates (bool, optional): If True, remove predictions for bonds that
                                           result in the same set of fragments. Defaults to True.
         device (str, optional): The device to run inference on ('cpu' or 'cuda'). Defaults to 'cpu'.
@@ -210,6 +212,7 @@ def get_bde_predictions(
             model_path=model_path,
             vocab_path=vocab_path,
             featurizer_type=featurizer_type,
+            num_messages=num_messages, # Pass num_messages here
             device=device
         )
         results_df = predictor.predict(smiles_list, drop_duplicates=drop_duplicates)
