@@ -88,32 +88,35 @@ class Predictor:
         Returns:
             pd.DataFrame: A concatenated DataFrame with predictions for all molecules.
         """
-        all_data_list = []
-        all_fragments_df_list = []
+        # 1. Generate fragment info for all molecules in one go
+        # This function is designed to handle a list of SMILES, reducing tqdm noise.
+        all_fragments_df = generate_fragment_template(smiles_list)
+
+        if all_fragments_df.empty:
+            print("No valid bonds found for prediction in the provided molecules.")
+            return pd.DataFrame()
+
+        # Get unique canonical SMILES from the generated fragments
+        canonical_smiles_processed = all_fragments_df['molecule'].unique().tolist()
         
-        # 1. Generate fragment info for all molecules and collect Data objects
-        for original_smiles_input_idx, smiles in enumerate(smiles_list):
-            fragment_df = generate_fragment_template([smiles])
-            if fragment_df.empty:
-                print(f"No valid bonds found for SMILES '{smiles}'. Skipping.")
-                continue
-            
-            canonical_smiles = fragment_df['molecule'].iloc[0] # Canonical SMILES used
-            
+        all_data_list = []
+        for canonical_smiles in canonical_smiles_processed:
             mol = Chem.MolFromSmiles(canonical_smiles)
+            if mol is None:
+                print(f"Failed to parse canonical SMILES: {canonical_smiles}. Skipping.")
+                continue
             mol = Chem.AddHs(mol)
             
             # Use the abstract featurizer
             data = self.featurizer.featurize(mol, smiles=canonical_smiles)
-            
+            if data is None:
+                print(f"Featurization failed for canonical SMILES: {canonical_smiles}. Skipping.")
+                continue
+            data.original_input_smiles = canonical_smiles # Ensure this is consistent with 'molecule' in df
             all_data_list.append(data)
-            all_fragments_df_list.append(fragment_df)
 
         if not all_data_list:
             return pd.DataFrame()
-
-        # Concatenate all fragment DataFrames
-        all_fragments_df = pd.concat(all_fragments_df_list, ignore_index=True)
 
         # 2. Batch featurized molecules and run model inference (single call)
         batch = Batch.from_data_list(all_data_list).to(self.device)
@@ -124,7 +127,7 @@ class Predictor:
         # 3. Map predictions back to original molecule and bond indices
         preds_records = []
         start_edge_idx = 0
-        for i, data in enumerate(all_data_list):
+        for data in all_data_list: # Iterate over the Data objects that were successfully featurized
             num_edges = data.edge_index.size(1) # Number of edges for this specific graph
             end_edge_idx = start_edge_idx + num_edges
 
@@ -135,15 +138,13 @@ class Predictor:
 
             # Create a temporary DataFrame to associate predictions with their original RDKit bond indices
             graph_preds_df = pd.DataFrame({
-                'molecule': data.original_input_smiles,
+                'molecule': data.original_input_smiles, # This should be the canonical smiles
                 'bond_index': graph_bond_indices,
                 'bde_pred': graph_preds.cpu().numpy(),
-                'is_valid': data.is_valid.item() # Add the is_valid flag for the molecule
+                'is_valid': data.is_valid.item()
             })
             
             # Group by molecule and bond_index to average predictions for the two directed edges
-            # (forward and backward) that correspond to a single original RDKit bond.
-            # The 'is_valid' flag will be the same for all bonds of a molecule, so mean() is fine.
             bde_preds_by_bond = graph_preds_df.groupby(['molecule', 'bond_index'])[['bde_pred', 'is_valid']].mean().reset_index()
             preds_records.append(bde_preds_by_bond)
             
@@ -152,7 +153,7 @@ class Predictor:
         final_bde_preds = pd.concat(preds_records, ignore_index=True) if preds_records else pd.DataFrame()
 
         # 4. Merge the averaged BDE predictions with the detailed fragment information
-        # This step ensures the predicted BDE is correctly associated with its fragments.
+        # Merge with the single all_fragments_df
         result_df = pd.merge(all_fragments_df, final_bde_preds, on=['molecule', 'bond_index'], how='left')
 
         # Drop the now-redundant bde column from the template if exists
