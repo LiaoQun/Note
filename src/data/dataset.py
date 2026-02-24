@@ -1,4 +1,5 @@
 import os
+import logging # Import logging
 from typing import Dict, List, Tuple
 
 import torch
@@ -6,6 +7,8 @@ from torch_geometric.data import InMemoryDataset
 from rdkit import Chem
 
 from src.features.base import BaseFeaturizer
+
+logger = logging.getLogger(__name__) # Get a logger for this module
 
 
 class BDEDataset(InMemoryDataset):
@@ -55,6 +58,7 @@ class BDEDataset(InMemoryDataset):
             try:
                 mol = Chem.MolFromSmiles(smiles)
                 if mol is None:
+                    logger.warning(f"Skipping SMILES '{smiles}' (index {i}) due to RDKit parse error.")
                     continue
                 mol = Chem.AddHs(mol)
                 
@@ -64,7 +68,7 @@ class BDEDataset(InMemoryDataset):
                 if data is not None:
                     data_list.append(data)
             except ValueError as e:
-                print(f"Skipping SMILES '{smiles}' (index {i}) due to error: {e}")
+                logger.warning(f"Skipping SMILES '{smiles}' (index {i}) due to featurization error: {e}", exc_info=True)
                 continue
         
         if self.pre_filter is not None:

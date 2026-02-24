@@ -11,12 +11,22 @@ from rdkit import Chem
 from tqdm import tqdm
 from typing import List, Tuple, Dict
 from sklearn.model_selection import train_test_split
+import logging # Import logging
 
 from src.config import MainConfig
 from src.features import get_featurizer
 from src.data.dataset import BDEDataset
-from src.models.mpnn import BDEModel
+from src.models.mpnn import BDEModel # Temporarily keep BDEModel
 from src.training.trainer import Trainer
+
+# Configure logging
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    handlers=[
+                        logging.StreamHandler(), # Output to console
+                        logging.FileHandler("training.log") # Save logs to a file
+                    ])
+logger = logging.getLogger(__name__) # Get a logger for this module
 
 
 def load_and_merge_data(data_paths: List[str]) -> pd.DataFrame:
@@ -34,71 +44,70 @@ def load_and_merge_data(data_paths: List[str]) -> pd.DataFrame:
         raise ValueError("No data paths provided in the configuration.")
 
     df_list = []
-    print("Loading data from the following paths:")
+    logger.info("Loading data from the following paths:")
     for path in data_paths:
         if os.path.exists(path):
-            print(f" - Loading {path}...")
+            logger.info(f" - Loading {path}...")
             try:
                 df_list.append(pd.read_csv(path))
             except Exception as e:
-                print(f"Warning: Could not read file {path}. Error: {e}. Skipping.")
+                logger.warning(f"Could not read file {path}. Error: {e}. Skipping.", exc_info=True)
         else:
-            print(f"Warning: Data file not found at: {path}. Skipping.")
+            logger.warning(f"Data file not found at: {path}. Skipping.")
     
     if not df_list:
         raise FileNotFoundError("No valid data files could be loaded from the specified paths.")
 
-    print("\nMerging and cleaning data...")
+    logger.info("\nMerging and cleaning data...")
     merged_df = pd.concat(df_list, ignore_index=True)
-    print(f"Total records loaded: {len(merged_df)}")
+    logger.info(f"Total records loaded: {len(merged_df)}")
 
     # Handle missing values
     initial_rows = len(merged_df)
     merged_df.dropna(subset=['molecule', 'bond_index', 'bde'], inplace=True)
     if initial_rows > len(merged_df):
-        print(f"Dropped {initial_rows - len(merged_df)} rows with missing key values (molecule, bond_index, or bde).")
+        logger.info(f"Dropped {initial_rows - len(merged_df)} rows with missing key values (molecule, bond_index, or bde).")
 
     # --- Canonicalize SMILES ---
-    print("Canonicalizing SMILES strings...")
+    logger.info("Canonicalizing SMILES strings...")
     
     def canonicalize(smi):
         try:
             mol = Chem.MolFromSmiles(smi)
             return Chem.MolToSmiles(mol, canonical=True) if mol else None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to canonicalize SMILES '{smi}': {e}", exc_info=True)
             return None
 
     initial_rows = len(merged_df)
     merged_df['molecule'] = merged_df['molecule'].apply(canonicalize)
     merged_df.dropna(subset=['molecule'], inplace=True)
     if initial_rows > len(merged_df):
-        print(f"Dropped {initial_rows - len(merged_df)} rows due to invalid/unparsable SMILES strings.")
+        logger.info(f"Dropped {initial_rows - len(merged_df)} rows due to invalid/unparsable SMILES strings.")
 
     # --- Handle duplicates ---
     # First pass: drop duplicates after loading
     initial_rows = len(merged_df)
     merged_df.drop_duplicates(subset=['molecule', 'bond_index'], keep='first', inplace=True)
     if initial_rows > len(merged_df):
-        print(f"Dropped {initial_rows - len(merged_df)} duplicate records (based on molecule and bond_index).")
+        logger.info(f"Dropped {initial_rows - len(merged_df)} duplicate records (based on molecule and bond_index).")
 
-    print(f"Final cleaned dataset contains {len(merged_df)} records.")
+    logger.info(f"Final cleaned dataset contains {len(merged_df)} records.")
     return merged_df
-
 
 
 def prepare_data(df: pd.DataFrame) -> List[Tuple[str, Dict[Tuple[int, int], float]]]:
     """
     Processes a DataFrame into a list of (SMILES, bde_labels_dict) tuples.
     """
-    smiles_data = []
-    grouped = df.groupby('molecule')
-    unique_smiles = list(grouped.groups.keys())
-
-    print(f"Preparing data for {len(unique_smiles)} molecules...")
-    for smiles in tqdm(unique_smiles, desc="Processing molecules"):
-        mol_df = grouped.get_group(smiles)
+    processed_smiles_data: List[Tuple[str, Dict[Tuple[int, int], float]]] = []
+    grouped_df = df.groupby('molecule')
+    
+    logger.info(f"Preparing BDE labels for {len(grouped_df)} unique molecules...")
+    for smiles, mol_df in tqdm(grouped_df, desc="Processing molecules for labels"):
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
+            logger.warning(f"Skipping molecule '{smiles}' due to RDKit parse error during label preparation.")
             continue
         mol = Chem.AddHs(mol)
 
@@ -109,17 +118,19 @@ def prepare_data(df: pd.DataFrame) -> List[Tuple[str, Dict[Tuple[int, int], floa
             
             try:
                 if bond_idx >= mol.GetNumBonds():
+                    logger.warning(f"Bond index {bond_idx} out of range for molecule '{smiles}'. Skipping bond.")
                     continue
                 bond = mol.GetBondWithIdx(bond_idx)
                 u, v = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
                 canonical_bond_key = (min(u, v), max(u, v))
                 bde_labels_dict[canonical_bond_key] = bde
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Error processing bond for {smiles} at bond_index {bond_idx}: {e}", exc_info=True)
                 pass
                 
-        smiles_data.append((smiles, bde_labels_dict))
+        processed_smiles_data.append((smiles, bde_labels_dict))
         
-    return smiles_data
+    return processed_smiles_data
 
 def run_training(cfg: MainConfig, config_path: str):
     """
@@ -128,44 +139,44 @@ def run_training(cfg: MainConfig, config_path: str):
     # 1. Setup
     torch.manual_seed(cfg.data.random_seed)
     device = torch.device(cfg.train.device if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+    logger.info(f"Using device: {device}")
 
     # Create a unique directory for this run
     run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     run_dir = os.path.join(cfg.train.output_dir, run_timestamp)
     os.makedirs(run_dir, exist_ok=True)
-    print(f"Saving all artifacts to: {run_dir}")
+    logger.info(f"Saving all artifacts to: {run_dir}")
 
     # Save the config file for this run for reproducibility
     shutil.copy(config_path, os.path.join(run_dir, 'config.json'))
-    print(f"Saved configuration to {run_dir}")
+    logger.info(f"Saved configuration to {run_dir}")
     
     # 2. Load, Merge, and Clean Data
     df = load_and_merge_data(cfg.data.data_paths)
 
     if df.empty:
-        print("Stopping run: No data available after loading and cleaning.")
+        logger.error("Stopping run: No data available after loading and cleaning.")
         return
 
     if 0 < cfg.data.sample_percentage < 1.0:
-        print(f"Sampling {cfg.data.sample_percentage * 100:.2f}% of unique molecules...")
+        logger.info(f"Sampling {cfg.data.sample_percentage * 100:.2f}% of unique molecules...")
         unique_mols = df['molecule'].unique()
         n_mols = max(1, int(len(unique_mols) * cfg.data.sample_percentage))
         sampled_mols = pd.Series(unique_mols).sample(n=n_mols, random_state=cfg.data.random_seed)
         df = df[df['molecule'].isin(sampled_mols)]
-        print(f"Dataset reduced to {len(df['molecule'].unique())} unique molecules and {len(df)} entries.")
+        logger.info(f"Dataset reduced to {len(df['molecule'].unique())} unique molecules and {len(df)} entries.")
     
-    smiles_data = prepare_data(df)
+    processed_smiles_data = prepare_data(df)
     
-    print("Splitting data...")
-    train_val_data, test_data = train_test_split(smiles_data, test_size=cfg.data.test_size, random_state=cfg.data.random_seed)
+    logger.info("Splitting data...")
+    train_val_smiles_data, test_smiles_data = train_test_split(processed_smiles_data, test_size=cfg.data.test_size, random_state=cfg.data.random_seed)
     val_split_ratio = cfg.data.val_size / (1.0 - cfg.data.test_size)
-    train_data, val_data = train_test_split(train_val_data, test_size=val_split_ratio, random_state=cfg.data.random_seed)
+    train_smiles_data, val_smiles_data = train_test_split(train_val_smiles_data, test_size=val_split_ratio, random_state=cfg.data.random_seed)
 
-    print(f"Training set: {len(train_data)} | Validation set: {len(val_data)} | Test set: {len(test_data)}")
+    logger.info(f"Initial splits: Train ({len(train_smiles_data)}), Val ({len(val_smiles_data)}), Test ({len(test_smiles_data)}) unique molecule entries.")
 
     # 3. Initialize Featurizer, Datasets, and DataLoaders
-    print(f"Initializing featurizer: {cfg.data.featurizer_type}...")
+    logger.info(f"Initializing featurizer: {cfg.data.featurizer_type}...")
     
     # Use the factory to get the featurizer based on config
     # Note: If vocab_path is in config, featurizer might load it. 
@@ -177,8 +188,8 @@ def run_training(cfg: MainConfig, config_path: str):
     # If not, we should build it from training data.
     # BaseFeaturizer has 'prepare_data' hook.
     if hasattr(featurizer, 'prepare_data'):
-        print("Preparing featurizer (e.g., building vocabulary)...")
-        train_smiles = [data[0] for data in train_data]
+        logger.info("Preparing featurizer (e.g., building vocabulary)...")
+        train_smiles = [data[0] for data in train_smiles_data]
         featurizer.prepare_data(train_smiles)
         
     # Save the featurizer state (e.g., vocab.json) to the run directory
@@ -186,20 +197,20 @@ def run_training(cfg: MainConfig, config_path: str):
     # We maintain the legacy 'vocab.json' filename for now if applicable, but better to pass run_dir.
     vocab_save_path = os.path.join(run_dir, "vocab.json")
     featurizer.save(vocab_save_path)
-    print(f"Featurizer state saved to: {vocab_save_path}")
+    logger.info(f"Featurizer state saved to: {vocab_save_path}")
     effective_vocab_path = vocab_save_path
 
-    print("Initializing datasets...")
-    train_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'train'), smiles_data=train_data, featurizer=featurizer)
-    val_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'val'), smiles_data=val_data, featurizer=featurizer)
-    test_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'test'), smiles_data=test_data, featurizer=featurizer)
+    logger.info("Initializing datasets...")
+    train_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'train'), smiles_data=train_smiles_data, featurizer=featurizer)
+    val_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'val'), smiles_data=val_smiles_data, featurizer=featurizer)
+    test_dataset = BDEDataset(root=os.path.join(cfg.data.dataset_dir, 'test'), smiles_data=test_smiles_data, featurizer=featurizer)
     
     train_loader = DataLoader(train_dataset, batch_size=cfg.train.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=cfg.train.batch_size, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=cfg.train.batch_size, shuffle=False)
     
     # 4. Initialize Model and Optimizer
-    print("Initializing model...")
+    logger.info("Initializing model...")
     model = BDEModel(
         atom_input_dim=featurizer.atom_dim,
         bond_input_dim=featurizer.bond_dim,
@@ -223,7 +234,7 @@ def run_training(cfg: MainConfig, config_path: str):
         run_dir=run_dir,
         # Pass additional data for final evaluation and saving
         full_dataset_df=df,
-        data_splits={'train': train_data, 'val': val_data, 'test': test_data},
+        data_splits={'train': train_smiles_data, 'val': val_smiles_data, 'test': test_smiles_data},
         vocab_path=effective_vocab_path, # Used by Predictor
         featurizer_type=cfg.data.featurizer_type
     )
@@ -247,7 +258,7 @@ def main():
 
     # Load and merge config from JSON file
     if os.path.exists(args.config_path):
-        print(f"Loading configuration from {args.config_path}...")
+        logger.info(f"Loading configuration from {args.config_path}...")
         with open(args.config_path, 'r') as f:
             try:
                 json_config = json.load(f)
@@ -258,13 +269,13 @@ def main():
                             if hasattr(config_group, key):
                                 setattr(config_group, key, value)
                             else:
-                                print(f"Warning: Unknown parameter '{key}' in group '{group}' found in JSON. Skipping.")
+                                logger.warning(f"Unknown parameter '{key}' in group '{group}' found in JSON. Skipping.")
                     else:
-                        print(f"Warning: Unknown config group '{group}' found in JSON. Skipping.")
+                        logger.warning(f"Unknown config group '{group}' found in JSON. Skipping.")
             except json.JSONDecodeError:
-                print(f"Error: Invalid JSON in config file: {args.config_path}. Using defaults.")
+                logger.error(f"Invalid JSON in config file: {args.config_path}. Using defaults.", exc_info=True)
     else:
-        print(f"Info: Config file not found at '{args.config_path}'. Using default settings.")
+        logger.info(f"Config file not found at '{args.config_path}'. Using default settings.")
 
 
     try:
@@ -272,7 +283,7 @@ def main():
     finally:
         # Cleanup
         if os.path.exists(config.data.dataset_dir):
-            print(f"Cleaning up temporary dataset directory: {config.data.dataset_dir}")
+            logger.info(f"Cleaning up temporary dataset directory: {config.data.dataset_dir}")
             shutil.rmtree(config.data.dataset_dir)
 
 if __name__ == '__main__':

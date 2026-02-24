@@ -6,7 +6,6 @@
     - 轉換 `BDEDataset` 為標準 PyG `Dataset`，以支持處理超出記憶體容量的數據集。
     - 在實現的同時，**必須** 配合 `DataLoader` 的 `num_workers` 參數進行優化，以隱藏磁碟 I/O 延遲，確保高效數據加載。
 - [ ] **數據增強 (Data Augmentation)**: 導入如 SMILES 隨機化等策略，以提升模型的泛化能力。
-- [ ] 參考alfabet優化整體架構，並且從Note專案中獨立出來
 - [X] generate_template optimize: frags_smiles_list = sorted(fragmented_smiles.split("."), key=len,reverse=True)
 
 ## 實驗管理與 ML Ops (Experiment Management & ML Ops)
@@ -31,8 +30,6 @@
 - [x] **優化 `create_training_template.py`**: 引入命令行參數，使其能從命令行接收 SMILES 輸入並指定輸出路徑。
 - [x] **優化 `predict.py`**:
     - [x] 簡化模型加載邏輯，允許通過 `--run_dir` 參數直接指向訓練運行目錄。
-- [ ] **建立統一的 CLI 入口**: (長期建議) 使用 Click 或 Typer 等工具，將所有腳本的功能整合到一個統一的命令行界面中。
-- [ ] **專案打包**: (長期建議) 將專案打包為可安裝的 Python 套件，以避免手動修改 `sys.path`。
 
 ## 程式碼重構與清理 (Code Refactoring & Cleanup)
 - [x] **移除重複的 `evaluate` 函數**: 在代碼中存在兩個 `evaluate` 函數，需要移除其中一個以保持代碼整潔。

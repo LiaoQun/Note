@@ -2,6 +2,7 @@
 This module contains the Predictor class for running inference with a trained BDE model.
 """
 import os
+import logging # Import logging
 from typing import List, Dict, Union, Optional, Tuple
 
 import numpy as np
@@ -14,6 +15,8 @@ from src.data_preparation.template_generator import generate_fragment_template
 from src.features import get_featurizer
 from src.config import DataConfig
 from src.models.mpnn import BDEModel
+
+logger = logging.getLogger(__name__) # Get a logger for this module
 
 
 class Predictor:
@@ -74,7 +77,7 @@ class Predictor:
             
         self.model.load_state_dict(new_state_dict)
         self.model.eval()
-        print("Model and featurizer loaded successfully.")
+        logger.info("Model and featurizer loaded successfully.")
 
     def predict(self, smiles_list: List[str], drop_duplicates: bool = True) -> pd.DataFrame:
         """
@@ -93,7 +96,7 @@ class Predictor:
         all_fragments_df = generate_fragment_template(smiles_list)
 
         if all_fragments_df.empty:
-            print("No valid bonds found for prediction in the provided molecules.")
+            logger.info("No valid bonds found for prediction in the provided molecules.")
             return pd.DataFrame()
 
         # Get unique canonical SMILES from the generated fragments
@@ -103,14 +106,14 @@ class Predictor:
         for canonical_smiles in canonical_smiles_processed:
             mol = Chem.MolFromSmiles(canonical_smiles)
             if mol is None:
-                print(f"Failed to parse canonical SMILES: {canonical_smiles}. Skipping.")
+                logger.warning(f"Failed to parse canonical SMILES: {canonical_smiles}. Skipping.")
                 continue
             mol = Chem.AddHs(mol)
             
             # Use the abstract featurizer
             data = self.featurizer.featurize(mol, smiles=canonical_smiles)
             if data is None:
-                print(f"Featurization failed for canonical SMILES: {canonical_smiles}. Skipping.")
+                logger.warning(f"Featurization failed for canonical SMILES: {canonical_smiles}. Skipping.")
                 continue
             data.original_input_smiles = canonical_smiles # Ensure this is consistent with 'molecule' in df
             all_data_list.append(data)
@@ -217,12 +220,16 @@ def get_bde_predictions_with_embeddings(
         
         all_fragments_df = generate_fragment_template(smiles_list)
         if all_fragments_df.empty:
+            logger.info("No valid bonds found for prediction in the provided molecules.")
             return pd.DataFrame(), {}
             
         canonical_smiles_processed = all_fragments_df['molecule'].unique().tolist()
         all_data_list = []
         for canonical_smiles in canonical_smiles_processed:
             mol = Chem.MolFromSmiles(canonical_smiles)
+            if mol is None:
+                logger.warning(f"Failed to parse canonical SMILES: {canonical_smiles}. Skipping.")
+                continue
             mol = Chem.AddHs(mol)
             data = predictor.featurizer.featurize(mol, smiles=canonical_smiles)
             if data:
@@ -230,6 +237,7 @@ def get_bde_predictions_with_embeddings(
                 all_data_list.append(data)
 
         if not all_data_list:
+            logger.info("No featurized data objects generated for prediction.")
             return pd.DataFrame(), {}
             
         batch = Batch.from_data_list(all_data_list).to(predictor.device)
@@ -299,7 +307,7 @@ def get_bde_predictions_with_embeddings(
         return results_df, processed_embeddings
 
     except Exception as e:
-        print(f"An error occurred during prediction: {e}")
+        logger.error(f"An error occurred during prediction: {e}", exc_info=True)
         return pd.DataFrame(), {}
 
 
@@ -349,5 +357,5 @@ def get_bde_predictions(
         results_df = predictor.predict(smiles_list, drop_duplicates=drop_duplicates)
         return results_df
     except Exception as e:
-        print(f"An error occurred during prediction: {e}")
+        logger.error(f"An error occurred during prediction: {e}", exc_info=True)
         return pd.DataFrame()
