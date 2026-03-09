@@ -14,7 +14,7 @@ from src.features.featurizer import (
     Tokenizer,
     TokenFeaturizer # Now testing TokenFeaturizer class directly
 )
-from src.features.chemprop_adapter import ChemPropPyGFeaturizer
+from src.features.chemprop import ChemPropFeaturizer
 from src.features import get_featurizer # Import the factory function
 
 @pytest.fixture
@@ -216,15 +216,15 @@ def test_token_featurizer_featurize(sample_mol, data_config_token):
 
 
 def test_chemprop_featurizer_properties(data_config_chemprop):
-    """Tests properties of ChemPropPyGFeaturizer."""
+    """Tests properties of ChemPropFeaturizer."""
     featurizer = get_featurizer(data_config_chemprop)
-    assert isinstance(featurizer, ChemPropPyGFeaturizer)
+    assert isinstance(featurizer, ChemPropFeaturizer)
     assert featurizer.is_discrete is False
     assert featurizer.atom_dim > 1
     assert featurizer.bond_dim > 1
 
 def test_chemprop_featurizer_featurize(sample_mol, data_config_chemprop):
-    """Tests featurize method of ChemPropPyGFeaturizer."""
+    """Tests featurize method of ChemPropFeaturizer."""
     featurizer = get_featurizer(data_config_chemprop)
     pyg_data = featurizer.featurize(sample_mol, smiles="CCO")
     assert isinstance(pyg_data, Data)
@@ -249,7 +249,7 @@ def test_get_featurizer_factory(data_config_token, data_config_chemprop):
     assert isinstance(featurizer_token, TokenFeaturizer)
     
     featurizer_chemprop = get_featurizer(data_config_chemprop)
-    assert isinstance(featurizer_chemprop, ChemPropPyGFeaturizer)
+    assert isinstance(featurizer_chemprop, ChemPropFeaturizer)
 
 def test_get_featurizer_unknown_type():
     """Tests error handling for unknown featurizer type."""

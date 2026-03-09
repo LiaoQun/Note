@@ -99,6 +99,44 @@ class MultiHotAtomFeaturizer(VectorFeaturizer[Atom]):
         return x
 
     @classmethod
+    def from_smiles(cls, smiles_list: List[str]) -> "MultiHotAtomFeaturizer":
+        """
+        掃描 smiles_list，動態收集所有出現的原子特性，建構 Featurizer。
+        OOV 行為：特徵向量為全零（不加入 unknown token）。
+        """
+        from rdkit import Chem
+        from rdkit.Chem.rdchem import HybridizationType
+
+        atomic_nums = set()
+        degrees = set()
+        hybridizations = set()
+        formal_charges = set()
+        chiral_tags = set()
+        num_Hs = set()
+
+        for smiles in smiles_list:
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is None:
+                continue
+            mol = Chem.AddHs(mol)
+            for atom in mol.GetAtoms():
+                atomic_nums.add(atom.GetAtomicNum())
+                degrees.add(atom.GetTotalDegree())
+                hybridizations.add(atom.GetHybridization())
+                formal_charges.add(atom.GetFormalCharge())
+                chiral_tags.add(int(atom.GetChiralTag()))
+                num_Hs.add(int(atom.GetTotalNumHs()))
+
+        return cls(
+            atomic_nums=sorted(atomic_nums),
+            degrees=sorted(degrees),
+            formal_charges=sorted(formal_charges),
+            chiral_tags=sorted(chiral_tags),
+            num_Hs=sorted(num_Hs),
+            hybridizations=sorted(hybridizations, key=lambda x: x.real),
+        )
+
+    @classmethod
     def v1(cls, max_atomic_num: int = 100):
         return cls(
             atomic_nums=list(range(1, max_atomic_num + 1)), degrees=list(range(6)),

@@ -54,30 +54,20 @@ class BaseFeaturizer(ABC):
             None: If featurization fails or molecule has no valid components.
         """
         pass
-    
-    def prepare_data(self, smiles_list: List[str]):
+    @classmethod
+    @abstractmethod
+    def from_smiles(cls, smiles_list: List[str], save_path: str) -> "BaseFeaturizer":
         """
-        Hook for stateful featurizers to learn from data (e.g., building vocabulary).
-        
-        Args:
-            smiles_list (List[str]): List of SMILES strings to learn from.
-        """
-        pass
-
-    def save(self, filepath: str):
-        """
-        Saves the featurizer's internal state (e.g., vocabulary) to a file.
-        
-        Args:
-            filepath (str): Path to save the state.
+        從訓練資料建構 Featurizer，並將狀態序列化到 save_path。
+        訓練端使用此方法。
         """
         pass
 
-    def load(self, filepath: str):
+    @classmethod
+    @abstractmethod
+    def from_vocab(cls, vocab_path: str) -> "BaseFeaturizer":
         """
-        Loads the featurizer's internal state from a file.
-        
-        Args:
-            filepath (str): Path to load the state from.
+        從序列化檔案重建 Featurizer。
+        推論端使用此方法。
         """
         pass

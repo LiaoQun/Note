@@ -14,7 +14,7 @@ from sklearn.model_selection import train_test_split
 import logging # Import logging
 
 from src.config import MainConfig
-from src.features import get_featurizer
+from src.features import get_featurizer, get_featurizer_from_vocab
 from src.data.dataset import BDEDataset
 from src.models.mpnn import BDEModel # Temporarily keep BDEModel
 from src.training.trainer import Trainer
@@ -176,28 +176,16 @@ def run_training(cfg: MainConfig, config_path: str):
     logger.info(f"Initial splits: Train ({len(train_smiles_data)}), Val ({len(val_smiles_data)}), Test ({len(test_smiles_data)}) unique molecule entries.")
 
     # 3. Initialize Featurizer, Datasets, and DataLoaders
-    logger.info(f"Initializing featurizer: {cfg.data.featurizer_type}...")
-    
-    # Use the factory to get the featurizer based on config
-    # Note: If vocab_path is in config, featurizer might load it. 
-    # But for new training, we usually want to build it from scratch if it's a TokenFeaturizer.
-    featurizer = get_featurizer(cfg.data)
-
-    # Check if we should build vocabulary (only for TokenFeaturizer usually)
-    # If vocab_path exists and is valid, the factory might have loaded it.
-    # If not, we should build it from training data.
-    # BaseFeaturizer has 'prepare_data' hook.
-    if hasattr(featurizer, 'prepare_data'):
-        logger.info("Preparing featurizer (e.g., building vocabulary)...")
-        train_smiles = [data[0] for data in train_smiles_data]
-        featurizer.prepare_data(train_smiles)
-        
-    # Save the featurizer state (e.g., vocab.json) to the run directory
-    # For TokenFeaturizer, this is critical. For ChemProp, it might be a no-op.
-    # We maintain the legacy 'vocab.json' filename for now if applicable, but better to pass run_dir.
     vocab_save_path = os.path.join(run_dir, "vocab.json")
-    featurizer.save(vocab_save_path)
-    logger.info(f"Featurizer state saved to: {vocab_save_path}")
+    train_smiles = [data[0] for data in train_smiles_data]
+
+    logger.info(f"Initializing featurizer: {cfg.data.featurizer_type}...")
+    featurizer = get_featurizer(
+        featurizer_type=cfg.data.featurizer_type,
+        smiles_list=train_smiles,
+        save_path=vocab_save_path
+    )
+    logger.info(f"Featurizer built and saved to: {vocab_save_path}")
     effective_vocab_path = vocab_save_path
 
     logger.info("Initializing datasets...")

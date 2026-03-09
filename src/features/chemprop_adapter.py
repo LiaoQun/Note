@@ -18,24 +18,63 @@ class ChemPropPyGFeaturizer(BaseFeaturizer):
     the output into a PyTorch Geometric `Data` object.
     """
 
-    def __init__(self, atom_featurizer_mode: str = "v2"):
-        """
-        Initializes the featurizer.
+    def __init__(self, atom_featurizer: MultiHotAtomFeaturizer, bond_featurizer: MultiHotBondFeaturizer):
+        self.atom_featurizer = atom_featurizer
+        self.bond_featurizer = bond_featurizer
 
-        Args:
-            atom_featurizer_mode (str): The mode for the atom featurizer.
-                                        Supported: 'v1', 'v2', 'organic'.
-        """
-        if atom_featurizer_mode == "v1":
-            self.atom_featurizer = MultiHotAtomFeaturizer.v1()
-        elif atom_featurizer_mode == "v2":
-            self.atom_featurizer = MultiHotAtomFeaturizer.v2()
-        elif atom_featurizer_mode == "organic":
-            self.atom_featurizer = MultiHotAtomFeaturizer.organic()
-        else:
-            raise ValueError(f"Unsupported atom featurizer mode: {atom_featurizer_mode}")
+    @classmethod
+    def from_smiles(cls, smiles_list: List[str], save_path: str) -> "ChemPropPyGFeaturizer":
+        """從訓練資料動態建構，並序列化到 save_path。"""
+        atom_feat = MultiHotAtomFeaturizer.from_smiles(smiles_list)
+        bond_feat = MultiHotBondFeaturizer()
+        instance = cls(atom_feat, bond_feat)
+        instance._save(save_path)
+        return instance
 
-        self.bond_featurizer = MultiHotBondFeaturizer()
+    @classmethod
+    def from_vocab(cls, vocab_path: str) -> "ChemPropPyGFeaturizer":
+        """從序列化檔案重建，保證與訓練時行為一致。"""
+        import json
+        from rdkit.Chem.rdchem import HybridizationType
+
+        with open(vocab_path, 'r') as f:
+            data = json.load(f)
+
+        # 將 int 還原為 HybridizationType enum
+        hybridization_map = {h.real: h for h in HybridizationType.values.values()}
+        hybridizations = [hybridization_map[v] for v in data["hybridizations"]]
+
+        atom_feat = MultiHotAtomFeaturizer(
+            atomic_nums=data["atomic_nums"],
+            degrees=data["degrees"],
+            formal_charges=data["formal_charges"],
+            chiral_tags=data["chiral_tags"],
+            num_Hs=data["num_Hs"],
+            hybridizations=hybridizations,
+        )
+        return cls(atom_feat, MultiHotBondFeaturizer())
+
+    def _save(self, save_path: str):
+        import json, os
+        from rdkit.Chem.rdchem import HybridizationType
+
+        atom_feat = self.atom_featurizer
+        # 從 atom_featurizer 反推出原始參數列表
+        data = {
+            "featurizer_type": "ChemPropFeaturizer",
+            "atomic_nums": sorted(atom_feat.atomic_nums.keys()),
+            "degrees": sorted(atom_feat.degrees.keys()),
+            "formal_charges": sorted(
+                atom_feat.formal_charges.keys(),
+                key=lambda x: list(atom_feat.formal_charges.keys()).index(x)
+            ),
+            "chiral_tags": sorted(atom_feat.chiral_tags.keys()),
+            "num_Hs": sorted(atom_feat.num_Hs.keys()),
+            "hybridizations": [h.real for h in atom_feat.hybridizations.keys()],
+        }
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, 'w') as f:
+            json.dump(data, f, indent=4)
 
     @property
     def atom_dim(self) -> int:

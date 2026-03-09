@@ -144,9 +144,23 @@ class TokenFeaturizer(BaseFeaturizer):
     Featurizer that uses a dictionary (Tokenizer) to map unique string representations
     of atoms and bonds to integer IDs.
     """
-    def __init__(self, vocab_filepath: str = None):
-        self.tokenizer = Tokenizer(vocab_filepath)
+    def __init__(self, tokenizer: Tokenizer):
+        # __init__ 只負責接收已建構好的 tokenizer，不做任何 I/O
+        self.tokenizer = tokenizer
 
+    @classmethod
+    def from_smiles(cls, smiles_list: List[str], save_path: str) -> "TokenFeaturizer":
+        """從訓練資料建構詞彙表，並序列化到 save_path。"""
+        tokenizer = Tokenizer()
+        tokenizer.build_from_smiles(smiles_list)
+        tokenizer.save(save_path)
+        return cls(tokenizer)
+
+    @classmethod
+    def from_vocab(cls, vocab_path: str) -> "TokenFeaturizer":
+        """從已存在的詞彙表檔案載入。"""
+        tokenizer = Tokenizer(vocab_filepath=vocab_path)
+        return cls(tokenizer)
     @property
     def atom_dim(self) -> int:
         return self.tokenizer.atom_num_classes + 1
@@ -159,15 +173,6 @@ class TokenFeaturizer(BaseFeaturizer):
     def is_discrete(self) -> bool:
         return True
 
-    def prepare_data(self, smiles_list: List[str]):
-        """Builds vocabulary from a list of SMILES."""
-        self.tokenizer.build_from_smiles(smiles_list)
-
-    def save(self, filepath: str):
-        self.tokenizer.save(filepath)
-
-    def load(self, filepath: str):
-        self.tokenizer.load(filepath)
 
     def featurize(self, mol: Chem.Mol, 
                   labels: Optional[Dict[Tuple[int, int], float]] = None,
@@ -231,7 +236,5 @@ class TokenFeaturizer(BaseFeaturizer):
 def mol_to_graph(mol, tokenizer, canonical_smiles, bde_labels_dict=None):
     # This is a temporary bridge.
     # We construct a TokenFeaturizer with the provided tokenizer to run featurize.
-    # But since TokenFeaturizer owns a Tokenizer, we can just swap it.
-    featurizer = TokenFeaturizer()
-    featurizer.tokenizer = tokenizer
+    featurizer = TokenFeaturizer(tokenizer)
     return featurizer.featurize(mol, bde_labels_dict, canonical_smiles)

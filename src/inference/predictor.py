@@ -12,8 +12,7 @@ from rdkit import Chem
 from torch_geometric.data import Data, Batch
 
 from src.data_preparation.template_generator import generate_fragment_template
-from src.features import get_featurizer
-from src.config import DataConfig
+from src.features import get_featurizer_from_vocab
 from src.models.mpnn import BDEModel
 
 logger = logging.getLogger(__name__) # Get a logger for this module
@@ -45,9 +44,10 @@ class Predictor:
         self.device = torch.device(device)
         
         # Initialize Featurizer
-        # We construct a temporary config object to use the factory
-        data_config = DataConfig(vocab_path=vocab_path, featurizer_type=featurizer_type)
-        self.featurizer = get_featurizer(data_config)
+        self.featurizer = get_featurizer_from_vocab(
+            featurizer_type=featurizer_type,
+            vocab_path=vocab_path
+        )
 
         # Re-create model architecture based on featurizer dimensions
         self.model = BDEModel(

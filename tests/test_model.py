@@ -12,7 +12,7 @@ from src.config import DataConfig
 from src.data.dataset import BDEDataset
 from src.features import get_featurizer # Import the factory function
 from src.features.featurizer import Tokenizer, TokenFeaturizer
-from src.features.chemprop_adapter import ChemPropPyGFeaturizer
+from src.features.chemprop import ChemPropFeaturizer
 from src.models.mpnn import BDEInteractionLayer, BDEModel
 
 ATOM_FEATURES = 128 # Matching the original Keras implementation
