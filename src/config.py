@@ -2,7 +2,7 @@
 This file contains dataclasses for managing model, training, and data configurations.
 """
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 @dataclass
 class DataConfig:
@@ -14,7 +14,7 @@ class DataConfig:
     val_size: float = 0.1 # Percentage of the original data, not the training set
     random_seed: int = 42
     sample_percentage: float = 1.0
-    featurizer_type: str = 'TokenFeaturizer'  # Options: 'TokenFeaturizer', 'ChemPropFeaturizer'
+    featurizer_type: Optional[str] = None  # Options: 'TokenFeaturizer', 'ChemPropFeaturizer'
 
 @dataclass
 class ModelConfig:

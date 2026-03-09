@@ -23,8 +23,7 @@ from src.training.trainer import Trainer
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     handlers=[
-                        logging.StreamHandler(), # Output to console
-                        logging.FileHandler("training.log") # Save logs to a file
+                        logging.StreamHandler() # Output to console
                     ])
 logger = logging.getLogger(__name__) # Get a logger for this module
 
@@ -145,6 +144,12 @@ def run_training(cfg: MainConfig, config_path: str):
     run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     run_dir = os.path.join(cfg.train.output_dir, run_timestamp)
     os.makedirs(run_dir, exist_ok=True)
+    
+    # Add FileHandler to save logs in the run directory
+    fh = logging.FileHandler(os.path.join(run_dir, "training.log"))
+    fh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logging.getLogger().addHandler(fh)
+
     logger.info(f"Saving all artifacts to: {run_dir}")
 
     # Save the config file for this run for reproducibility
@@ -178,6 +183,10 @@ def run_training(cfg: MainConfig, config_path: str):
     # 3. Initialize Featurizer, Datasets, and DataLoaders
     vocab_save_path = os.path.join(run_dir, "vocab.json")
     train_smiles = [data[0] for data in train_smiles_data]
+
+    if cfg.data.featurizer_type is None:
+        logger.error("Stopping run: 'featurizer_type' is not specified or config failed to load.")
+        return
 
     logger.info(f"Initializing featurizer: {cfg.data.featurizer_type}...")
     featurizer = get_featurizer(
@@ -261,9 +270,11 @@ def main():
                     else:
                         logger.warning(f"Unknown config group '{group}' found in JSON. Skipping.")
             except json.JSONDecodeError:
-                logger.error(f"Invalid JSON in config file: {args.config_path}. Using defaults.", exc_info=True)
+                logger.error(f"Invalid JSON in config file: {args.config_path}. Aborting.", exc_info=True)
+                return
     else:
-        logger.info(f"Config file not found at '{args.config_path}'. Using default settings.")
+        logger.info(f"Config file not found at '{args.config_path}'. Please provide a valid config. Aborting.")
+        return
 
 
     try:
