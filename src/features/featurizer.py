@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Dict, List, Optional, Tuple, Union
+import math
 
 import torch
 from rdkit import Chem
@@ -175,7 +176,7 @@ class TokenFeaturizer(BaseFeaturizer):
 
 
     def featurize(self, mol: Chem.Mol, 
-                  labels: Optional[Dict[Tuple[int, int], float]] = None,
+                  labels: Optional[Dict[Tuple[int, int], List[float]]] = None,
                   smiles: str = "") -> Optional[Data]:
         """
         Converts a single RDKit Mol object into a PyG Data object.
@@ -201,14 +202,21 @@ class TokenFeaturizer(BaseFeaturizer):
                 
                 if is_training:
                     canonical_bond_key = tuple(sorted((u, v)))
-                    bde_label = labels.get(canonical_bond_key)
+                    bde_labels = labels.get(canonical_bond_key)
                     
-                    if bde_label is not None:
-                        edge_bde_labels.append(bde_label)
-                        edge_masks.append(True)
+                    if bde_labels is not None:
+                        # Convert NaNs to 0 internally, and use mask to ignore them during loss computation
+                        cleaned_labels = [float(lbl) if not math.isnan(lbl) else 0.0 for lbl in bde_labels]
+                        masks = [not math.isnan(lbl) for lbl in bde_labels]
+                        
+                        edge_bde_labels.append(cleaned_labels)
+                        edge_masks.append(masks)
                     else:
-                        edge_bde_labels.append(0.0)
-                        edge_masks.append(False)
+                        # No training labels available for this edge, but we might still need to match dimensions
+                        # Assume 1 task dimension if labels is empty just to avoid breaking during inference init test
+                        num_tasks = len(list(labels.values())[0]) if len(labels) > 0 else 1
+                        edge_bde_labels.append([0.0] * num_tasks)
+                        edge_masks.append([False] * num_tasks)
 
         if not edge_indices:
             return None

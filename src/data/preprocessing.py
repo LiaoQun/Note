@@ -7,13 +7,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def load_and_merge_data(data_paths: List[str]) -> pd.DataFrame:
+def load_and_merge_data(data_paths: List[str], target_columns: List[str] = ['bde']) -> pd.DataFrame:
     """
     Loads data from a list of CSV file paths, merges them, canonicalizes SMILES,
-    and cleans the data.
+    and cleans the data. Allows rows with missing values as long as at least one task target is present.
 
     Args:
         data_paths (List[str]): A list of file paths to the CSV data.
+        target_columns (List[str]): The columns representing predicting tasks.
 
     Returns:
         pd.DataFrame: A single, cleaned DataFrame containing all the data.
@@ -40,11 +41,17 @@ def load_and_merge_data(data_paths: List[str]) -> pd.DataFrame:
     merged_df = pd.concat(df_list, ignore_index=True)
     logger.info(f"Total records loaded: {len(merged_df)}")
 
-    # Handle missing values
+    # Handle missing values: We keep the row as long as molecule, bond_index exist and AT LEAST ONE target exists.
     initial_rows = len(merged_df)
-    merged_df.dropna(subset=['molecule', 'bond_index', 'bde'], inplace=True)
+    
+    # Must have molecule and bond_index
+    merged_df.dropna(subset=['molecule', 'bond_index'], inplace=True)
+    
+    # Must have at least one valid target present for multi-task support
+    merged_df = merged_df.dropna(subset=target_columns, how='all')
+    
     if initial_rows > len(merged_df):
-        logger.info(f"Dropped {initial_rows - len(merged_df)} rows with missing key values (molecule, bond_index, or bde).")
+        logger.info(f"Dropped {initial_rows - len(merged_df)} rows missing critical key values or containing NO valid targets.")
 
     # --- Canonicalize SMILES ---
     logger.info("Canonicalizing SMILES strings...")
@@ -74,11 +81,12 @@ def load_and_merge_data(data_paths: List[str]) -> pd.DataFrame:
     return merged_df
 
 
-def prepare_data(df: pd.DataFrame) -> List[Tuple[str, Dict[Tuple[int, int], float]]]:
+def prepare_data(df: pd.DataFrame, target_columns: List[str] = ['bde']) -> List[Tuple[str, Dict[Tuple[int, int], List[float]]]]:
     """
-    Processes a DataFrame into a list of (SMILES, bde_labels_dict) tuples.
+    Processes a DataFrame into a list of (SMILES, labels_dict) tuples.
+    Instead of single floats, labels are now lists of floats representing targets. NaN is allowed.
     """
-    processed_smiles_data: List[Tuple[str, Dict[Tuple[int, int], float]]] = []
+    processed_smiles_data: List[Tuple[str, Dict[Tuple[int, int], List[float]]]] = []
     grouped_df = df.groupby('molecule')
     
     logger.info(f"Preparing BDE labels for {len(grouped_df)} unique molecules...")
@@ -89,10 +97,9 @@ def prepare_data(df: pd.DataFrame) -> List[Tuple[str, Dict[Tuple[int, int], floa
             continue
         mol = Chem.AddHs(mol)
 
-        bde_labels_dict = {}
+        labels_dict = {}
         for _, row in mol_df.iterrows():
             bond_idx = int(row['bond_index'])
-            bde = float(row['bde'])
             
             try:
                 if bond_idx >= mol.GetNumBonds():
@@ -101,11 +108,18 @@ def prepare_data(df: pd.DataFrame) -> List[Tuple[str, Dict[Tuple[int, int], floa
                 bond = mol.GetBondWithIdx(bond_idx)
                 u, v = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
                 canonical_bond_key = (min(u, v), max(u, v))
-                bde_labels_dict[canonical_bond_key] = bde
+                
+                # Extract multi-task target list. Keep NaN as float('nan') 
+                targets = []
+                for col in target_columns:
+                    val = row.get(col, float('nan'))
+                    targets.append(float(val))
+                    
+                labels_dict[canonical_bond_key] = targets
             except Exception as e:
                 logger.warning(f"Error processing bond for {smiles} at bond_index {bond_idx}: {e}", exc_info=True)
                 pass
                 
-        processed_smiles_data.append((smiles, bde_labels_dict))
+        processed_smiles_data.append((smiles, labels_dict))
         
     return processed_smiles_data

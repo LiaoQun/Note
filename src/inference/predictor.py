@@ -22,7 +22,8 @@ class Predictor:
     """Handles loading a trained model and making BDE predictions."""
 
     def __init__(self, model_path: str, vocab_path: str, featurizer_type: str = 'TokenFeaturizer', 
-                 atom_features: int = 128, num_messages: int = 6, device: str = 'cpu'):
+                 atom_features: int = 128, num_messages: int = 6, num_tasks: int = 1,
+                 target_columns: List[str] = ['bde'], device: str = 'cpu'):
         """
         Initializes the Predictor.
 
@@ -32,6 +33,8 @@ class Predictor:
             featurizer_type (str): Type of featurizer to use ('TokenFeaturizer' or 'ChemPropFeaturizer').
             atom_features (int): Hidden dimension size for the model.
             num_messages (int): Number of message passing layers.
+            num_tasks (int): Number of tasks the model was trained on.
+            target_columns (List[str]): Names of the target tasks.
             device (str): The device to run inference on ('cpu' or 'cuda').
         """
         if not os.path.exists(model_path):
@@ -49,13 +52,16 @@ class Predictor:
             vocab_path=vocab_path
         )
 
+        self.target_columns = target_columns
+
         # Re-create model architecture based on featurizer dimensions
         self.model = BDEModel(
             atom_input_dim=self.featurizer.atom_dim,
             bond_input_dim=self.featurizer.bond_dim,
             atom_features=atom_features,
             num_messages=num_messages,
-            inputs_are_discrete=self.featurizer.is_discrete
+            inputs_are_discrete=self.featurizer.is_discrete,
+            num_tasks=num_tasks
         ).to(self.device)
         
         # The warning for weights_only=False is a security feature.
@@ -134,21 +140,32 @@ class Predictor:
             num_edges = data.edge_index.size(1) # Number of edges for this specific graph
             end_edge_idx = start_edge_idx + num_edges
 
-            # Extract raw predictions for the current molecule's graph
+            # Extract raw predictions for the current molecule's graph (shape: [num_edges, num_tasks])
             graph_preds = raw_predictions[start_edge_idx:end_edge_idx]
             # Retrieve the bond_indices_map created during featurization for this graph
             graph_bond_indices = data.bond_indices_map.cpu().numpy()
 
             # Create a temporary DataFrame to associate predictions with their original RDKit bond indices
-            graph_preds_df = pd.DataFrame({
-                'molecule': data.original_input_smiles, # This should be the canonical smiles
+            df_data = {
+                'molecule': data.original_input_smiles, 
                 'bond_index': graph_bond_indices,
-                'bde_pred': graph_preds.cpu().numpy(),
                 'is_valid': data.is_valid.item()
-            })
+            }
+            
+            # Unpack each task into its own column
+            np_preds = graph_preds.cpu().numpy()
+            pred_col_names = []
+            for i, target_name in enumerate(self.target_columns):
+                col_name = f"{target_name}_pred"
+                # If model hasn't been upgraded properly (edge case, old model file), handle gracefully
+                val_arr = np_preds[:, i] if len(np_preds.shape) > 1 else np_preds
+                df_data[col_name] = val_arr
+                pred_col_names.append(col_name)
+
+            graph_preds_df = pd.DataFrame(df_data)
             
             # Group by molecule and bond_index to average predictions for the two directed edges
-            bde_preds_by_bond = graph_preds_df.groupby(['molecule', 'bond_index'])[['bde_pred', 'is_valid']].mean().reset_index()
+            bde_preds_by_bond = graph_preds_df.groupby(['molecule', 'bond_index'])[pred_col_names + ['is_valid']].mean().reset_index()
             preds_records.append(bde_preds_by_bond)
             
             start_edge_idx = end_edge_idx
@@ -159,9 +176,10 @@ class Predictor:
         # Merge with the single all_fragments_df
         result_df = pd.merge(all_fragments_df, final_bde_preds, on=['molecule', 'bond_index'], how='left')
 
-        # Drop the now-redundant bde column from the template if exists
-        if 'bde' in result_df.columns:
-            result_df = result_df.drop(columns=['bde'])
+        # Drop the now-redundant original target columns from the template if they exist
+        for target in self.target_columns:
+            if target in result_df.columns:
+                result_df = result_df.drop(columns=[target])
 
         if drop_duplicates:
             # Sort fragments within each row to create a canonical key for deduplication
@@ -184,6 +202,8 @@ def get_bde_predictions_with_embeddings(
     vocab_path: str,
     featurizer_type: str = 'TokenFeaturizer',
     num_messages: int = 6,
+    num_tasks: int = 1,
+    target_columns: List[str] = ['bde'],
     device: str = 'cpu'
 ) -> Tuple[pd.DataFrame, Dict[int, pd.DataFrame]]:
     """
@@ -215,6 +235,8 @@ def get_bde_predictions_with_embeddings(
             vocab_path=vocab_path,
             featurizer_type=featurizer_type,
             num_messages=num_messages,
+            num_tasks=num_tasks,
+            target_columns=target_columns,
             device=device
         )
         
@@ -270,10 +292,18 @@ def get_bde_predictions_with_embeddings(
             
             graph_preds_df = pd.DataFrame({
                 'molecule': data.original_input_smiles,
-                'bond_index': data.bond_indices_map.cpu().numpy(),
-                'bde_pred': final_predictions[start_edge_idx:end_edge_idx].cpu().numpy()
+                'bond_index': data.bond_indices_map.cpu().numpy()
             })
-            bde_preds_by_bond = graph_preds_df.groupby(['molecule', 'bond_index'])['bde_pred'].mean().reset_index()
+            
+            np_preds = final_predictions[start_edge_idx:end_edge_idx].cpu().numpy()
+            pred_col_names = []
+            for i, target_name in enumerate(target_columns):
+                col_name = f"{target_name}_pred"
+                val_arr = np_preds[:, i] if len(np_preds.shape) > 1 else np_preds
+                graph_preds_df[col_name] = val_arr
+                pred_col_names.append(col_name)
+
+            bde_preds_by_bond = graph_preds_df.groupby(['molecule', 'bond_index'])[pred_col_names].mean().reset_index()
             final_bde_preds_list.append(bde_preds_by_bond)
             
             start_edge_idx = end_edge_idx
@@ -319,6 +349,8 @@ def get_bde_predictions(
     vocab_path: str,
     featurizer_type: str = 'TokenFeaturizer',
     num_messages: int = 6, # Add num_messages parameter
+    num_tasks: int = 1,
+    target_columns: List[str] = ['bde'],
     drop_duplicates: bool = True,
     device: str = 'cpu'
 ) -> pd.DataFrame:
@@ -352,6 +384,8 @@ def get_bde_predictions(
             vocab_path=vocab_path,
             featurizer_type=featurizer_type,
             num_messages=num_messages, # Pass num_messages here
+            num_tasks=num_tasks,
+            target_columns=target_columns,
             device=device
         )
         results_df = predictor.predict(smiles_list, drop_duplicates=drop_duplicates)

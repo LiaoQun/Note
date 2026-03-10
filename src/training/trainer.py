@@ -89,7 +89,9 @@ class Trainer:
         for batch in tqdm(self.train_loader, desc=f"Epoch {epoch} [Train]", leave=False):
             batch = batch.to(self.device)
             self.optimizer.zero_grad()
-            pred = self.model(batch)
+            pred = self.model(batch) # [num_edges, num_tasks]
+            
+            # Mask out missing target elements. Both pred and y have shape [num_edges, num_tasks]
             if batch.mask.sum() > 0:
                 loss = F.l1_loss(pred[batch.mask], batch.y[batch.mask])
                 loss.backward()
@@ -104,7 +106,8 @@ class Trainer:
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc=f"Epoch {epoch} [Val]", leave=False):
                 batch = batch.to(self.device)
-                pred = self.model(batch)
+                pred = self.model(batch) # [num_edges, num_tasks]
+                
                 if batch.mask.sum() > 0:
                     loss = F.l1_loss(pred[batch.mask], batch.y[batch.mask])
                     total_loss += loss.item() * batch.num_graphs
@@ -124,7 +127,9 @@ class Trainer:
                 vocab_path=self.vocab_path,
                 featurizer_type=self.featurizer_type,
                 atom_features=self.model_cfg.atom_features, 
-                num_messages=self.model_cfg.num_messages,   
+                num_messages=self.model_cfg.num_messages,
+                num_tasks=self.model_cfg.num_tasks,
+                target_columns=getattr(self.cfg, 'target_columns', ['bde']),
                 device=self.device
             )
         except FileNotFoundError as e:
@@ -143,16 +148,18 @@ class Trainer:
             # Get unique SMILES for the current split
             smiles_list = sorted(list(set([item[0] for item in data_list])))
             
-            # Get rich prediction dataframe using the predictor
+            # Predictor now returns a DataFrame filled with `[task]_pred` columns
             pred_df = predictor.predict(smiles_list, drop_duplicates=False)
 
-            # Merge with original dataframe to get ground truth `bde`
-            # The original df has all ground truth data
+            # Retrieve true labels mapping. This assumes target keys exist in full_dataset
+            # Predictor merge logic will handle the actual bond index merging per target 
+            target_cols = getattr(self.cfg, 'target_columns', ['bde']) # Fallback if not injected nicely
+            
             merged_df = pd.merge(
                 pred_df,
-                self.full_dataset_df[['molecule', 'bond_index', 'bde']],
+                self.full_dataset_df[['molecule', 'bond_index'] + target_cols],
                 on=['molecule', 'bond_index'],
-                how='inner' # Use inner merge to only keep bonds with known ground truth
+                how='inner' 
             )
 
             # Save the detailed predictions to a CSV file
@@ -160,20 +167,45 @@ class Trainer:
             merged_df.to_csv(output_path, index=False)
             logger.info(f"Saved detailed predictions for {split_name} set to {output_path}")
 
-            # Prepare data for parity plot
+            # Collect results for charting
             if not merged_df.empty:
-                y_true = merged_df['bde'].values
-                y_pred = merged_df['bde_pred'].values
-                results_for_plotting[split_name] = (y_true, y_pred)
+                # Initialize splitting per target
+                if split_name not in results_for_plotting:
+                    results_for_plotting[split_name] = {}
+                    
+                for task in target_cols:
+                    pred_col_name = f"{task}_pred"
+                    if pred_col_name in merged_df.columns:
+                        # Only plot indices where ground truth isn't NaN for THIS task
+                        valid_mask = ~merged_df[task].isna()
+                        y_true = merged_df.loc[valid_mask, task].values
+                        y_pred = merged_df.loc[valid_mask, pred_col_name].values
+                        
+                        if len(y_true) > 0:
+                            results_for_plotting[split_name][task] = (y_true, y_pred)
         
-        # 3. Generate parity plot
+        # 3. Generate parity plot for EACH task
         if results_for_plotting:
-            logger.info("\nGenerating parity plot...")
-            plot_parity(
-                results=results_for_plotting,
-                title="BDE Prediction Parity Plot",
-                output_path=os.path.join(self.run_dir, "parity_plot.png")
-            )
+            plotted_tasks = set()
+            for split, task_dict in results_for_plotting.items():
+                for task in task_dict.keys():
+                    plotted_tasks.add(task)
+            
+            for task in plotted_tasks:
+                logger.info(f"\nGenerating parity plot for {task}...")
+                
+                # Reconstruct standard results struct for the plotter: {'train': (true, pred), 'test': (true, pred)}
+                task_results = {}
+                for split in results_for_plotting.keys():
+                    if task in results_for_plotting[split]:
+                        task_results[split] = results_for_plotting[split][task]
+                
+                if task_results:
+                    plot_parity(
+                        results=task_results,
+                        title=f"{task.upper()} Prediction Parity Plot",
+                        output_path=os.path.join(self.run_dir, f"parity_plot_{task}.png")
+                    )
         else:
             logger.info("No results to plot.")
 

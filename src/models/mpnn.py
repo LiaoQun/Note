@@ -116,7 +116,8 @@ class BDEModel(nn.Module):
                  bond_input_dim: int, 
                  atom_features: int = 128, 
                  num_messages: int = 6,
-                 inputs_are_discrete: bool = True):
+                 inputs_are_discrete: bool = True,
+                 num_tasks: int = 1):
         """
         Args:
             atom_input_dim (int): Number of atom classes (if discrete) OR dimension of atom vector (if continuous).
@@ -124,6 +125,7 @@ class BDEModel(nn.Module):
             atom_features (int): Hidden dimension size for the model.
             num_messages (int): Number of message passing layers.
             inputs_are_discrete (bool): If True, uses Embeddings. If False, uses Linear projection.
+            num_tasks (int): Number of prediction tasks (target variables) to output.
         """
         super().__init__()
         self.inputs_are_discrete = inputs_are_discrete
@@ -134,21 +136,21 @@ class BDEModel(nn.Module):
             self.atom_encoder = nn.Embedding(atom_input_dim, atom_features)
             self.bond_encoder = nn.Embedding(bond_input_dim, atom_features)
             # Per-bond-type bias (lookup table)
-            self.bond_bias_encoder = nn.Embedding(bond_input_dim, 1)
+            self.bond_bias_encoder = nn.Embedding(bond_input_dim, num_tasks)
         else:
             # ChemProp/Continuous logic: Float Vector -> Linear Projection
             self.atom_encoder = nn.Linear(atom_input_dim, atom_features)
             self.bond_encoder = nn.Linear(bond_input_dim, atom_features)
             # Bias computed from bond features
-            self.bond_bias_encoder = nn.Linear(bond_input_dim, 1)
+            self.bond_bias_encoder = nn.Linear(bond_input_dim, num_tasks)
 
         # 2. Stack of interaction layers
         self.interaction_layers = nn.ModuleList(
             [BDEInteractionLayer(atom_features) for _ in range(num_messages)]
         )
 
-        # 3. Final MLP to predict BDE value from bond state
-        self.output_mlp = nn.Linear(atom_features, 1)
+        # 3. Final MLP to predict BDE values from bond state
+        self.output_mlp = nn.Linear(atom_features, num_tasks)
 
     def forward(self, data: Union[Data, Batch]) -> torch.Tensor:
         """
@@ -160,7 +162,7 @@ class BDEModel(nn.Module):
                                        - edge_attr: Bond inputs.
 
         Returns:
-            torch.Tensor: Predicted BDEs [num_edges].
+            torch.Tensor: Predicted values [num_edges, num_tasks].
         """
         # 1. Encode Inputs
         if self.inputs_are_discrete:
@@ -179,10 +181,10 @@ class BDEModel(nn.Module):
         for layer in self.interaction_layers:
             atom_state, bond_state = layer(atom_state, data.edge_index, bond_state)
 
-        # 3. Predict BDE from final bond state
-        bde_pred = self.output_mlp(bond_state) # [num_edges, 1]
+        # 3. Predict targets from final bond state
+        bde_pred = self.output_mlp(bond_state) # [num_edges, num_tasks]
         
         # 4. Add the per-bond-type bias
-        bde_pred = bde_pred + bond_mean # [num_edges, 1]
+        bde_pred = bde_pred + bond_mean # [num_edges, num_tasks]
 
-        return bde_pred.squeeze(-1) # [num_edges]
+        return bde_pred # [num_edges, num_tasks]

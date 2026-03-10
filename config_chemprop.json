@@ -14,7 +14,7 @@
   },
   "train": {
     "device": "cpu",
-    "epochs": 50,
+    "epochs": 5,
     "lr": 0.001,
     "batch_size": 32,
     "model_save_path": "bde_model.pt",

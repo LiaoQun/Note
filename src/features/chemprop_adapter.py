@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional, Tuple
+import math
 
 import numpy as np
 import torch
@@ -92,7 +93,7 @@ class ChemPropPyGFeaturizer(BaseFeaturizer):
     def featurize(
         self,
         mol: Chem.Mol,
-        labels: Optional[Dict[Tuple[int, int], float]] = None,
+        labels: Optional[Dict[Tuple[int, int], List[float]]] = None,
         smiles: str = "",
     ) -> Optional[Data]:
         """
@@ -127,15 +128,24 @@ class ChemPropPyGFeaturizer(BaseFeaturizer):
 
             if is_training:
                 canonical_bond_key = tuple(sorted((u, v)))
-                bde_label = labels.get(canonical_bond_key)
+                bde_labels = labels.get(canonical_bond_key)
                 
                 # Assign labels to both directed edges
-                if bde_label is not None:
-                    edge_bde_labels.extend([bde_label, bde_label])
-                    edge_masks.extend([True, True])
+                if bde_labels is not None:
+                    # Convert NaNs to 0 internally, and use mask to ignore them during loss computation
+                    cleaned_labels = [float(lbl) if not math.isnan(lbl) else 0.0 for lbl in bde_labels]
+                    masks = [not math.isnan(lbl) for lbl in bde_labels]
+                    
+                    edge_bde_labels.extend([cleaned_labels, cleaned_labels])
+                    edge_masks.extend([masks, masks])
                 else:
-                    edge_bde_labels.extend([0.0, 0.0])
-                    edge_masks.extend([False, False])
+                    # Assume 1 task dimension if labels is empty just to avoid breaking during inference init test
+                    num_tasks = len(list(labels.values())[0]) if len(labels) > 0 else 1
+                    zero_labels = [0.0] * num_tasks
+                    false_masks = [False] * num_tasks
+                    
+                    edge_bde_labels.extend([zero_labels, zero_labels])
+                    edge_masks.extend([false_masks, false_masks])
         
         if not edge_indices:
             return None

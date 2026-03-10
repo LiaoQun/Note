@@ -14,7 +14,7 @@ from src.features.featurizer import (
     Tokenizer,
     TokenFeaturizer # Now testing TokenFeaturizer class directly
 )
-from src.features.chemprop import ChemPropFeaturizer
+from src.features.chemprop_adapter import ChemPropPyGFeaturizer
 from src.features import get_featurizer # Import the factory function
 
 @pytest.fixture
@@ -173,29 +173,28 @@ def data_config_chemprop():
     """Provides a DataConfig for ChemPropFeaturizer."""
     return DataConfig(featurizer_type="ChemPropFeaturizer")
 
-def test_token_featurizer_properties(data_config_token):
+def test_token_featurizer_properties(sample_vocab_file):
     """Tests properties of TokenFeaturizer."""
-    featurizer = get_featurizer(data_config_token)
+    featurizer = get_featurizer(
+        featurizer_type="TokenFeaturizer",
+        smiles_list=["CCO", "C"],
+        save_path=sample_vocab_file
+    )
     assert isinstance(featurizer, TokenFeaturizer)
     assert featurizer.is_discrete is True
     assert featurizer.atom_dim > 1
     assert featurizer.bond_dim > 1
 
-def test_token_featurizer_featurize(sample_mol, data_config_token):
+def test_token_featurizer_featurize(sample_mol):
     """Tests featurize method of TokenFeaturizer."""
-    # Create a tokenizer and build vocab for sample_mol first
-    # This is necessary because the fixture's vocab_file only contains limited features
-    temp_tokenizer = Tokenizer()
-    temp_tokenizer.build_from_smiles([Chem.MolToSmiles(sample_mol)])
-    
-    # Save temp vocab
     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".json") as f:
         temp_vocab_path = f.name
-    temp_tokenizer.save(temp_vocab_path)
-    
-    # Now create featurizer with the built vocab
-    data_config_token.vocab_path = temp_vocab_path
-    featurizer = get_featurizer(data_config_token)
+        
+    featurizer = get_featurizer(
+        featurizer_type="TokenFeaturizer",
+        smiles_list=[Chem.MolToSmiles(sample_mol)],
+        save_path=temp_vocab_path
+    )
 
     pyg_data = featurizer.featurize(sample_mol, smiles="CCO")
     assert isinstance(pyg_data, Data)
@@ -204,28 +203,44 @@ def test_token_featurizer_featurize(sample_mol, data_config_token):
     assert pyg_data.x.shape[0] == sample_mol.GetNumAtoms()
     assert pyg_data.edge_attr.shape[0] == sample_mol.GetNumBonds() * 2 # Bidirectional edges
     
-    # Check for labels if provided (optional)
-    labels = {(0, 1): 80.0, (1, 2): 90.0} # C-C and C-O bond
+    # Check for labels if provided (optional). Mock list of float for multi-task support.
+    labels = {(0, 1): [80.0], (1, 2): [90.0]} # C-C and C-O bond
     pyg_data_with_labels = featurizer.featurize(sample_mol, labels=labels, smiles="CCO")
     assert pyg_data_with_labels.y.dtype == torch.float
     assert pyg_data_with_labels.mask.dtype == torch.bool
-    assert pyg_data_with_labels.y.shape[0] == sample_mol.GetNumBonds() * 2
+    assert pyg_data_with_labels.y.shape == (sample_mol.GetNumBonds() * 2, 1) # Assumes 1 task in mock
 
     # Cleanup temp vocab file
     os.remove(temp_vocab_path)
 
 
-def test_chemprop_featurizer_properties(data_config_chemprop):
+def test_chemprop_featurizer_properties():
     """Tests properties of ChemPropFeaturizer."""
-    featurizer = get_featurizer(data_config_chemprop)
-    assert isinstance(featurizer, ChemPropFeaturizer)
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".json") as f:
+        temp_vocab_path = f.name
+        
+    featurizer = get_featurizer(
+        featurizer_type="ChemPropFeaturizer",
+        smiles_list=["CCO", "C"],
+        save_path=temp_vocab_path
+    )
+    assert isinstance(featurizer, ChemPropPyGFeaturizer)
     assert featurizer.is_discrete is False
     assert featurizer.atom_dim > 1
     assert featurizer.bond_dim > 1
+    os.remove(temp_vocab_path)
 
-def test_chemprop_featurizer_featurize(sample_mol, data_config_chemprop):
+def test_chemprop_featurizer_featurize(sample_mol):
     """Tests featurize method of ChemPropFeaturizer."""
-    featurizer = get_featurizer(data_config_chemprop)
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".json") as f:
+        temp_vocab_path = f.name
+        
+    featurizer = get_featurizer(
+        featurizer_type="ChemPropFeaturizer",
+        smiles_list=[Chem.MolToSmiles(sample_mol)],
+        save_path=temp_vocab_path
+    )
+    
     pyg_data = featurizer.featurize(sample_mol, smiles="CCO")
     assert isinstance(pyg_data, Data)
     assert pyg_data.x.dtype == torch.float
@@ -235,24 +250,40 @@ def test_chemprop_featurizer_featurize(sample_mol, data_config_chemprop):
     assert pyg_data.x.shape[1] == featurizer.atom_dim
     assert pyg_data.edge_attr.shape[1] == featurizer.bond_dim
 
-    # Check for labels if provided (optional)
-    labels = {(0, 1): 80.0, (1, 2): 90.0} # C-C and C-O bond
+    # Check for labels if provided (optional). Multi-task mock list layout.
+    labels = {(0, 1): [80.0], (1, 2): [90.0]} # C-C and C-O bond
     pyg_data_with_labels = featurizer.featurize(sample_mol, labels=labels, smiles="CCO")
     assert pyg_data_with_labels.y.dtype == torch.float
     assert pyg_data_with_labels.mask.dtype == torch.bool
-    assert pyg_data_with_labels.y.shape[0] == sample_mol.GetNumBonds() * 2
+    assert pyg_data_with_labels.y.shape == (sample_mol.GetNumBonds() * 2, 1)
 
+    os.remove(temp_vocab_path)
 
-def test_get_featurizer_factory(data_config_token, data_config_chemprop):
+def test_get_featurizer_factory():
     """Tests the get_featurizer factory function."""
-    featurizer_token = get_featurizer(data_config_token)
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".json") as f:
+        temp_vocab_path = f.name
+        
+    featurizer_token = get_featurizer(
+        featurizer_type="TokenFeaturizer",
+        smiles_list=["CCO"],
+        save_path=temp_vocab_path
+    )
     assert isinstance(featurizer_token, TokenFeaturizer)
     
-    featurizer_chemprop = get_featurizer(data_config_chemprop)
-    assert isinstance(featurizer_chemprop, ChemPropFeaturizer)
+    featurizer_chemprop = get_featurizer(
+        featurizer_type="ChemPropFeaturizer",
+        smiles_list=["CCO"],
+        save_path=temp_vocab_path
+    )
+    assert isinstance(featurizer_chemprop, ChemPropPyGFeaturizer)
+    os.remove(temp_vocab_path)
 
 def test_get_featurizer_unknown_type():
     """Tests error handling for unknown featurizer type."""
-    invalid_config = DataConfig(featurizer_type="UnknownFeaturizer")
     with pytest.raises(ValueError, match="Unknown featurizer type"):
-        get_featurizer(invalid_config)
+        get_featurizer(
+            featurizer_type="UnknownFeaturizer",
+            smiles_list=["CCO"],
+            save_path="dummy.json"
+        )

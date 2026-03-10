@@ -10,6 +10,7 @@ class DataConfig:
     data_paths: List[str] = field(default_factory=lambda: ['examples/test_data.csv.gz'])
     vocab_path: str = 'etc/preprocessor.json'
     dataset_dir: str = 'temp_dataset'
+    target_columns: List[str] = field(default_factory=lambda: ['bde'])
     test_size: float = 0.1
     val_size: float = 0.1 # Percentage of the original data, not the training set
     random_seed: int = 42
@@ -21,6 +22,7 @@ class ModelConfig:
     """Configuration for the BDEModel."""
     atom_features: int = 128
     num_messages: int = 6
+    num_tasks: int = 1
 
 @dataclass
 class TrainConfig:

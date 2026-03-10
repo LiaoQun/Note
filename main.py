@@ -56,7 +56,7 @@ def run_training(cfg: MainConfig, config_path: str):
     logger.info(f"Saved configuration to {run_dir}")
     
     # 2. Load, Merge, and Clean Data
-    df = load_and_merge_data(cfg.data.data_paths)
+    df = load_and_merge_data(cfg.data.data_paths, target_columns=cfg.data.target_columns)
 
     if df.empty:
         logger.error("Stopping run: No data available after loading and cleaning.")
@@ -70,7 +70,7 @@ def run_training(cfg: MainConfig, config_path: str):
         df = df[df['molecule'].isin(sampled_mols)]
         logger.info(f"Dataset reduced to {len(df['molecule'].unique())} unique molecules and {len(df)} entries.")
     
-    processed_smiles_data = prepare_data(df)
+    processed_smiles_data = prepare_data(df, target_columns=cfg.data.target_columns)
     
     logger.info("Splitting data...")
     train_val_smiles_data, test_smiles_data = train_test_split(processed_smiles_data, test_size=cfg.data.test_size, random_state=cfg.data.random_seed)
@@ -112,7 +112,8 @@ def run_training(cfg: MainConfig, config_path: str):
         bond_input_dim=featurizer.bond_dim,
         atom_features=cfg.model.atom_features,
         num_messages=cfg.model.num_messages,
-        inputs_are_discrete=featurizer.is_discrete
+        inputs_are_discrete=featurizer.is_discrete,
+        num_tasks=cfg.model.num_tasks
     ).to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
