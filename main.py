@@ -56,20 +56,17 @@ def run_training(cfg: MainConfig, config_path: str):
     logger.info(f"Saved configuration to {run_dir}")
     
     # 2. Load, Merge, and Clean Data
-    df = load_and_merge_data(cfg.data.data_paths, target_columns=cfg.data.target_columns)
+    df = load_and_merge_data(
+        cfg.data.data_paths, 
+        target_columns=cfg.data.target_columns,
+        sample_percentage=cfg.data.sample_percentage,
+        random_seed=cfg.data.random_seed
+    )
 
     if df.empty:
         logger.error("Stopping run: No data available after loading and cleaning.")
         return
 
-    if 0 < cfg.data.sample_percentage < 1.0:
-        logger.info(f"Sampling {cfg.data.sample_percentage * 100:.2f}% of unique molecules...")
-        unique_mols = df['molecule'].unique()
-        n_mols = max(1, int(len(unique_mols) * cfg.data.sample_percentage))
-        sampled_mols = pd.Series(unique_mols).sample(n=n_mols, random_state=cfg.data.random_seed)
-        df = df[df['molecule'].isin(sampled_mols)]
-        logger.info(f"Dataset reduced to {len(df['molecule'].unique())} unique molecules and {len(df)} entries.")
-    
     processed_smiles_data = prepare_data(df, target_columns=cfg.data.target_columns)
     
     logger.info("Splitting data...")
@@ -133,7 +130,8 @@ def run_training(cfg: MainConfig, config_path: str):
         full_dataset_df=df,
         data_splits={'train': train_smiles_data, 'val': val_smiles_data, 'test': test_smiles_data},
         vocab_path=effective_vocab_path, # Used by Predictor
-        featurizer_type=cfg.data.featurizer_type
+        featurizer_type=cfg.data.featurizer_type,
+        target_columns=cfg.data.target_columns
     )
     
     trainer.train()

@@ -72,10 +72,11 @@ def plot_parity(
     for i, name in enumerate(dataset_names):
         ax = axes[i]
         
+        target_name = title.split()[0] if title else "Target"
         if name not in results or results[name][0].size == 0:
             ax.set_title(f"{name.capitalize()} Set (No Data)", fontsize=14)
-            ax.set_xlabel("Actual BDE (kcal/mol)", fontsize=12)
-            ax.set_ylabel("Predicted BDE (kcal/mol)", fontsize=12)
+            ax.set_xlabel(f"Actual {target_name} (kcal/mol)", fontsize=12)
+            ax.set_ylabel(f"Predicted {target_name} (kcal/mol)", fontsize=12)
             ax.grid(True, which='both', linestyle='--', linewidth=0.5)
             ax.set_aspect('equal', adjustable='box')
             ax.set_xlim(min_val - buffer, max_val + buffer)
@@ -100,8 +101,8 @@ def plot_parity(
         ax.plot([min_val - buffer, max_val + buffer], [min_val - buffer, max_val + buffer], 'k--', lw=2, label="y=x")
 
         ax.set_title(f"{name.capitalize()} Set", fontsize=14)
-        ax.set_xlabel("Actual BDE (kcal/mol)", fontsize=12)
-        ax.set_ylabel("Predicted BDE (kcal/mol)", fontsize=12)
+        ax.set_xlabel(f"Actual {target_name} (kcal/mol)", fontsize=12)
+        ax.set_ylabel(f"Predicted {target_name} (kcal/mol)", fontsize=12)
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
         ax.legend(loc="lower right")
         ax.set_xlim(min_val - buffer, max_val + buffer)

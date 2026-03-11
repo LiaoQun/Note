@@ -7,10 +7,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def load_and_merge_data(data_paths: List[str], target_columns: List[str] = ['bde']) -> pd.DataFrame:
+def load_and_merge_data(data_paths: List[str], target_columns: List[str] = ['bde'], sample_percentage: float = 1.0, random_seed: int = 42) -> pd.DataFrame:
     """
     Loads data from a list of CSV file paths, merges them, canonicalizes SMILES,
-    and cleans the data. Allows rows with missing values as long as at least one task target is present.
+    and cleans the data.
+    Allows rows with missing values as long as at least one task target is present.
 
     Args:
         data_paths (List[str]): A list of file paths to the CSV data.
@@ -53,6 +54,14 @@ def load_and_merge_data(data_paths: List[str], target_columns: List[str] = ['bde
     if initial_rows > len(merged_df):
         logger.info(f"Dropped {initial_rows - len(merged_df)} rows missing critical key values or containing NO valid targets.")
 
+    if 0 < sample_percentage < 1.0:
+        logger.info(f"Sampling {sample_percentage * 100:.2f}% of unique molecules before canonicalization...")
+        unique_mols = merged_df['molecule'].unique()
+        n_mols = max(1, int(len(unique_mols) * sample_percentage))
+        sampled_mols = pd.Series(unique_mols).sample(n=n_mols, random_state=random_seed)
+        merged_df = merged_df[merged_df['molecule'].isin(sampled_mols)]
+        logger.info(f"Dataset reduced to {len(merged_df['molecule'].unique())} unique molecules and {len(merged_df)} entries for processing.")
+
     # --- Canonicalize SMILES ---
     logger.info("Canonicalizing SMILES strings...")
     
@@ -70,14 +79,16 @@ def load_and_merge_data(data_paths: List[str], target_columns: List[str] = ['bde
     if initial_rows > len(merged_df):
         logger.info(f"Dropped {initial_rows - len(merged_df)} rows due to invalid/unparsable SMILES strings.")
 
-    # --- Handle duplicates ---
-    # First pass: drop duplicates after loading
+    # --- Handle separate multi-task source combinations & multiple identical bond targets ---
+    # Group by identical molecules and bonds to fuse multi-file target columns.
+    # We use `.first()` here to keep the first non-null valid target for each task column,
+    # effectively prioritizing data that was parsed first and ignoring subsequent overlaps.
     initial_rows = len(merged_df)
-    merged_df.drop_duplicates(subset=['molecule', 'bond_index'], keep='first', inplace=True)
+    merged_df = merged_df.groupby(['molecule', 'bond_index'], as_index=False).first()
     if initial_rows > len(merged_df):
-        logger.info(f"Dropped {initial_rows - len(merged_df)} duplicate records (based on molecule and bond_index).")
+        logger.info(f"Grouped {initial_rows - len(merged_df)} overlapping/duplicate records from multi-CSV splits (prioritizing first available targets).")
 
-    logger.info(f"Final cleaned dataset contains {len(merged_df)} records.")
+    logger.info(f"Final cleaned dataset contains {len(merged_df)} unique bond records.")
     return merged_df
 
 

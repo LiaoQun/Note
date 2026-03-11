@@ -1,21 +1,22 @@
 {
     "data": {
         "data_paths": [
-            "examples/test_data.csv.gz"
+            "examples/bde-db2.csv.gz"
         ],
         "test_size": 0.1,
         "val_size": 0.1,
-        "sample_percentage": 1.0,
+        "sample_percentage": 0.01,
         "featurizer_type": "ChemPropFeaturizer",
         "target_columns": [
             "bde",
-            "bdfe"
+            "bdfe",
+            "bdscfe"
         ]
     },
     "model": {
         "atom_features": 128,
         "num_messages": 3,
-        "num_tasks": 2
+        "num_tasks": 3
     },
     "train": {
         "device": "cpu",

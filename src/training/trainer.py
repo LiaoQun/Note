@@ -22,7 +22,8 @@ class Trainer:
     """
     def __init__(self, model, optimizer, train_loader, val_loader, test_loader, 
                  device, cfg: TrainConfig, model_cfg: ModelConfig, run_dir: str, full_dataset_df: pd.DataFrame, 
-                 data_splits: Dict[str, List], vocab_path: str, featurizer_type: str = 'TokenFeaturizer'):
+                 data_splits: Dict[str, List], vocab_path: str, featurizer_type: str = 'TokenFeaturizer',
+                 target_columns: List[str] = None):
         self.model = model
         self.optimizer = optimizer
         self.train_loader = train_loader
@@ -37,6 +38,7 @@ class Trainer:
         self.featurizer_type = featurizer_type
         self.full_dataset_df = full_dataset_df
         self.data_splits = data_splits
+        self.target_columns = target_columns if target_columns is not None else ['bde']
 
     def train(self):
         """
@@ -129,7 +131,7 @@ class Trainer:
                 atom_features=self.model_cfg.atom_features, 
                 num_messages=self.model_cfg.num_messages,
                 num_tasks=self.model_cfg.num_tasks,
-                target_columns=getattr(self.cfg, 'target_columns', ['bde']),
+                target_columns=self.target_columns,
                 device=self.device
             )
         except FileNotFoundError as e:
@@ -153,7 +155,7 @@ class Trainer:
 
             # Retrieve true labels mapping. This assumes target keys exist in full_dataset
             # Predictor merge logic will handle the actual bond index merging per target 
-            target_cols = getattr(self.cfg, 'target_columns', ['bde']) # Fallback if not injected nicely
+            target_cols = self.target_columns
             
             merged_df = pd.merge(
                 pred_df,
